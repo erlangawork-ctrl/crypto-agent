@@ -28,7 +28,7 @@ def send_telegram_message(message):
     }
     try:
         response = requests.post(url, json=payload, timeout=10)
-        print(f"Telegram status: {response.status_code}")
+        print(f"Telegram status code: {response.status_code}")
     except Exception as e:
         print(f"Fout bij versturen Telegram bericht: {e}")
 
@@ -49,13 +49,14 @@ def run_trading_agent():
     print("==================================================")
     print(" AI Trading Agent gestart op Render.com (24/7)    ")
     print(" Strategy: EV_adj, Scale-Out (50/30/20), No-Blind-Limit")
+    print(" Features: Multi-timeframe (15m/5m) + Early Warnings")
     print("==================================================\n")
     
     if not GEMINI_API_KEY:
         raise ValueError("CRITICAL: Geen GEMINI_API_KEY gevonden!")
 
     # Welkomstbericht op Telegram bij opstarten
-    send_telegram_message("🚀 Crypto Agent Online! De 24/7 markt-scanner is succesvol opgestart op Render.")
+    send_telegram_message("🚀 Crypto Agent Online! Multi-timeframe scanner met Early Warnings is actief op Render.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     exchange = ccxt.binance()
@@ -66,31 +67,37 @@ def run_trading_agent():
         try:
             for symbol in symbols:
                 current_time = time.strftime('%Y-%m-%d %H:%M:%S')
-                print(f"[{current_time}] Scannen van {symbol} via Binance...")
+                print(f"[{current_time}] Scannen van {symbol} (15m + 5m) via Binance...")
                 
-                bars = exchange.fetch_ohlcv(symbol, timeframe="15m", limit=20)
-                df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                # 1. Haal 15m data op voor de macro/structureele context & Full Body Close
+                bars_15m = exchange.fetch_ohlcv(symbol, timeframe="15m", limit=20)
+                df_15m = pd.DataFrame(bars_15m, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df_15m['timestamp'] = pd.to_datetime(df_15m['timestamp'], unit='ms')
                 
-                market_data_json = df.to_json(orient="records")
+                # 2. Haal 5m data op voor de M3/M5 Reversal Confirmation op de retest
+                bars_5m = exchange.fetch_ohlcv(symbol, timeframe="5m", limit=12)
+                df_5m = pd.DataFrame(bars_5m, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df_5m['timestamp'] = pd.to_datetime(df_5m['timestamp'], unit='ms')
+                
+                data_json_15m = df_15m.to_json(orient="records")
+                data_json_5m = df_5m.to_json(orient="records")
                 
                 prompt = f"""
-                Hier is de meest recente 15m OHLCV marktdata voor {symbol}:
-                {market_data_json}
-                
-                Evalueer of er op dit moment een geldige trade setup ontstaat op basis van onze Master Instructions.
-                
-                STRIKTE REGELS OM AF TE DWINGEN:
-                1. Pas het Strikt No-Blind-Limit Protocol toe (vereist M3/M5 reversal bevestiging op de retest).
-                2. Controleer de 15m Full Body Close Regel (upper/lower wick mag niet >30% zijn van de kaars).
-                3. Pas de -30% False Breakout Penalty toe bij herstel <48u na HTF breakdown.
-                4. Pas de US Open Filter toe (geen front-run limit orders op S/R tussen 15:15 en 16:30 CET).
-                5. Pas de gewogen R:R formule toe met het Scale-Out Protocol (50% TP1, 30% TP2, 20% Runner).
-                6. Bereken de Setup Score, EV en EV_adj (met Fill Chance T).
-                
-                COMMUNICATIE INSTRUCTIES:
-                - Als er GÉÉN directe setup klaarstaat (Score < 65%), geef dan een hele korte statusupdate van 1-2 regels volgens Sectie 2.
-                - Als er WÉL een actieve setup of retest is (Score >= 65%), gebruik dan ONVOORWAARDELIJK het volledige verplichte Output Format uit Sectie 8 (inclusief Execution Optimization Matrix).
+                Hier is de live marktdata voor {symbol}:
+
+                ### 15-MINUTEN MARKTDATA (Context & Full Body Close):
+                {data_json_15m}
+
+                ### 5-MINUTEN MARKTDATA (Micro Reversal & Retest Trigger):
+                {data_json_5m}
+
+                Evalueer of er op dit moment een geldige trade setup ontstaat of dat de koers een belangrijk S/R niveau nadert.
+
+                COMMUNICATIE- EN NOTIFICATIE INSTRUCTIES:
+                1. ALERT (Early Warning): Als de prijs een belangrijk HTF S/R-niveau tot op <=0.3% nadert, maar de M3/M5 reversal nog NIET is bevestigd, start je antwoord met 'ALERT' en geef een korte waarschuwing dat de zone wordt genaderd.
+                2. WATCHLIST: Als er een 15m Full Body Close is geweest maar de M3/M5 retest nog gaande is, start je met 'WATCHLIST' en gebruik je de tabellen.
+                3. GO: Als er een actieve setup is mét afgeronde M3/M5 reversal candle (Score >= 65%), start je met 'GO' en gebruik je het volledige Output Format uit Sectie 8.
+                4. NO-GO / GEEN SETUP: Als er niks boeiends gebeurt (Score < 65%), geef dan een heel korte statusupdate van 1 regel zonder tabellen.
                 """
                 
                 response = client.models.generate_content(
@@ -104,9 +111,9 @@ def run_trading_agent():
                 print(analysis_text)
                 print("------------------------------------\n")
                 
-                # Stuur een melding naar Telegram als er een GO of WATCHLIST status is getriggerd
-                if "GO" in analysis_text or "WATCHLIST" in analysis_text:
-                    telegram_msg = f"📊 TRADE SIGNAL: {symbol}\n\n{analysis_text}"
+                # Stuur een melding naar Telegram bij ALERT, WATCHLIST of GO
+                if any(tag in analysis_text for tag in ["GO", "WATCHLIST", "ALERT"]):
+                    telegram_msg = f"📊 MARKET UPDATE: {symbol}\n\n{analysis_text}"
                     send_telegram_message(telegram_msg)
                 
             print("Wachten op volgende scaninterval (5 minuten)...\n")
