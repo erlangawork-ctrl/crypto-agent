@@ -1,14 +1,29 @@
 import os
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import ccxt
 import pandas as pd
 from google import genai
 from system_prompt import SYSTEM_INSTRUCTIONS
 
 # ==========================================
-# CONFIGURATIE & API KEY (Via Environment Variable)
+# CONFIGURATIE & API KEY
 # ==========================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Dummy HTTP Server om de Web Service poort van Render te openen
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Crypto Agent Live & Scanning 24/7!")
+
+def start_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    print(f"Web service dummy poort actief op poort {port}")
+    server.serve_forever()
 
 def run_trading_agent():
     print("==================================================")
@@ -19,7 +34,6 @@ def run_trading_agent():
     if not GEMINI_API_KEY:
         raise ValueError("CRITICAL: Geen GEMINI_API_KEY gevonden in environment variables!")
 
-    # Maak verbinding met de Gemini API
     client = genai.Client(api_key=GEMINI_API_KEY)
     exchange = ccxt.binance()
     
@@ -31,7 +45,6 @@ def run_trading_agent():
                 current_time = time.strftime('%Y-%m-%d %H:%M:%S')
                 print(f"[{current_time}] Scannen van {symbol} via Binance...")
                 
-                # Haal de meest recente 20 M15 kaarsen op van Binance
                 bars = exchange.fetch_ohlcv(symbol, timeframe="15m", limit=20)
                 df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -54,7 +67,7 @@ def run_trading_agent():
                 
                 COMMUNICATIE INSTRUCTIES:
                 - Als er GÉÉN directe setup klaarstaat (Score < 65%), geef dan een hele korte statusupdate van 1-2 regels volgens Sectie 2.
-                - Als er WÉL een actieve setup of retest is (Score >= 65%), gebruik dan ONVOORWAARDELIJK het volledige verplichte Output Format uit Sectie 8 (inclusief Execution Optimization Matrix).
+                - Als er WÉL een actieve setup en retest is (Score >= 65%), gebruik dan ONVOORWAARDELIJK het volledige verplichte Output Format uit Sectie 8 (inclusief Execution Optimization Matrix).
                 """
                 
                 response = client.models.generate_content(
@@ -76,4 +89,7 @@ def run_trading_agent():
             time.sleep(60)
 
 if __name__ == "__main__":
+    # Start de web server in een aparte thread zodat Render de poort ziet
+    threading.Thread(target=start_web_server, daemon=True).start()
+    # Start de trading agent
     run_trading_agent()
