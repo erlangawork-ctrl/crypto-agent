@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import ccxt
 import pandas as pd
@@ -8,11 +9,29 @@ from google import genai
 from system_prompt import SYSTEM_INSTRUCTIONS
 
 # ==========================================
-# CONFIGURATIE & API KEY
+# CONFIGURATIE & ENVIRONMENT VARIABLES
 # ==========================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Dummy HTTP Server om de Web Service poort van Render te openen
+def send_telegram_message(message):
+    """Verstuurt een bericht via de Telegram Bot API."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram niet geconfigureerd. Bericht overgeslagen.")
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Fout bij versturen Telegram bericht: {e}")
+
+# Dummy HTTP Server voor Render Health Check
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -32,7 +51,10 @@ def run_trading_agent():
     print("==================================================\n")
     
     if not GEMINI_API_KEY:
-        raise ValueError("CRITICAL: Geen GEMINI_API_KEY gevonden in environment variables!")
+        raise ValueError("CRITICAL: Geen GEMINI_API_KEY gevonden!")
+
+    # Welkomstbericht op Telegram bij opstarten
+    send_telegram_message("🚀 Crypto Agent Online! De 24/7 markt-scanner is succesvol opgestart op Render.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     exchange = ccxt.binance()
@@ -67,7 +89,7 @@ def run_trading_agent():
                 
                 COMMUNICATIE INSTRUCTIES:
                 - Als er GÉÉN directe setup klaarstaat (Score < 65%), geef dan een hele korte statusupdate van 1-2 regels volgens Sectie 2.
-                - Als er WÉL een actieve setup en retest is (Score >= 65%), gebruik dan ONVOORWAARDELIJK het volledige verplichte Output Format uit Sectie 8 (inclusief Execution Optimization Matrix).
+                - Als er WÉL een actieve setup of retest is (Score >= 65%), gebruik dan ONVOORWAARDELIJK het volledige verplichte Output Format uit Sectie 8 (inclusief Execution Optimization Matrix).
                 """
                 
                 response = client.models.generate_content(
@@ -76,20 +98,23 @@ def run_trading_agent():
                     config={'system_instruction': SYSTEM_INSTRUCTIONS}
                 )
                 
+                analysis_text = response.text
                 print(f"\n--- ANALYSE RESULTAAT {symbol} ---")
-                print(response.text)
+                print(analysis_text)
                 print("------------------------------------\n")
+                
+                # Stuur een melding naar Telegram als er een GO of WATCHLIST status is getriggerd
+                if "GO" in analysis_text or "WATCHLIST" in analysis_text:
+                    telegram_msg = f"📊 TRADE SIGNAL: {symbol}\n\n{analysis_text}"
+                    send_telegram_message(telegram_msg)
                 
             print("Wachten op volgende scaninterval (5 minuten)...\n")
             time.sleep(300)
             
         except Exception as e:
             print(f"Fout tijdens scan loop: {e}")
-            print("Herstarten over 60 seconden...")
             time.sleep(60)
 
 if __name__ == "__main__":
-    # Start de web server in een aparte thread zodat Render de poort ziet
     threading.Thread(target=start_web_server, daemon=True).start()
-    # Start de trading agent
     run_trading_agent()
