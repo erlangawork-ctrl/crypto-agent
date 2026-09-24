@@ -18,7 +18,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 def send_telegram_message(message):
     """Verstuurt een bericht via de Telegram Bot API."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram niet geconfigureerd. Bericht overgeslagen.")
+        print("Telegram niet geconfigureerd in Environment Variables.")
         return
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -27,7 +27,8 @@ def send_telegram_message(message):
         "text": message
     }
     try:
-        requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=10)
+        print(f"Telegram status: {response.status_code}")
     except Exception as e:
         print(f"Fout bij versturen Telegram bericht: {e}")
 
