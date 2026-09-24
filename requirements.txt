@@ -1,0 +1,4 @@
+ccxt
+google-genai
+pandas
+pytz
