@@ -127,7 +127,7 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (HARDKEY LEVELS + EV_adj)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + KEY LEVELS)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
@@ -161,7 +161,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 
     KWANTITATIEVE SCORING MATRIX (4 FACTOREN):
     1. Trend Alignment (35%): 3/3 Aligned = 100%, 2/3 = 66.7%, 1/3 = 33.3%
-    2. Level Kwaliteit (30%): HTF Major (PDH/PDL/4H S/R uit de berekende lijst) = 100%, 1H/15m Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
+    2. Level Kwaliteit (30%): HTF Major (PDH/PDL/4H S/R uit berekende lijst) = 100%, 1H/15m Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
     3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
     4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
 
@@ -174,7 +174,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
 
     3-TRAPS VERDICT REGELS:
-    1. ⚠️ PRE-TRADE ALERT: De actuele prijs OF de high/low van de lopende candle is binnen <= 1.0% van een berekend KEY LEVEL, maar er is nog GEEN afgeronde 15m close over level of M3/M5 reversal. Doel: Klaarzitten op M3/M5!
+    1. ⚠️ PRE-TRADE ALERT: De actuele prijs OF de high/low van de lopende candle is binnen <= 1.0% van een BEREKEND KEY LEVEL, maar er is nog GEEN afgeronde 15m close over level of M3/M5 reversal. Doel: Klaarzitten op M3/M5!
     2. 👁️ WATCHLIST: 15m Full Body Close is GEVALIDEERD op/over een KEY LEVEL (wick <= 30%), maar M3/M5 reversal is nog in aanbouw.
     3. 🚨 GO: 15m Full Body Close GEVALIDEERD (of actieve uitbraak) EN op M3/M5 staat een BEVESTIGDE Reversal Pinbar/Engulfing op de retest van een KEY LEVEL EN Score >= 65% EN EV_adj > +0.30R.
     4. NO-GO: Score < 65% (B-Rating) of geen KEY LEVELS nabij (>1.0% afstand).
@@ -240,8 +240,9 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     """
 
     try:
+        # GEBRUIK GEMINI 3.8 FLASH OM DE 404 DEPRECATION ERROR OP TE LOSSEN
         response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=prompt,
         )
         return response.text.strip()
@@ -307,10 +308,11 @@ if __name__ == "__main__":
     startup_msg = (
         "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
-        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van S/R (Klaarzitten)\n"
-        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) bevestigd\n"
+        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van Berekend S/R Level (Klaarzitten)\n"
+        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Berekend Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Inclusief:** Hardcoded Key-Level Detectie, EV_adj als LEIDENDE METRIC & Option C Tight SL Matrix.\n"
+        "• **Model Update:** Actief op Gemini 3.8 Flash (404 Error Opgelost)\n"
+        "• **Inclusief:** Hardcoded Key-Level Detectie Engine, Fast Retest Scans & EV_adj Metric.\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
