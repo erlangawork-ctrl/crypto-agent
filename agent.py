@@ -86,7 +86,7 @@ scalp_alerts_enabled = True
 
 
 # ==========================================
-# 3. TELEGRAM COMMAND HANDLER (INTERACTIEVE KNOPPEN/COMMANDO'S)
+# 3. TELEGRAM COMMAND HANDLER (LIVE INTERACTIE)
 # ==========================================
 def listen_telegram_commands():
     """Luistert op de achtergrond naar Telegram commando's (/scalp_off, /scalp_on, /status)"""
@@ -99,8 +99,8 @@ def listen_telegram_commands():
 
     while True:
         try:
-            params = {"timeout": 30, "offset": last_update_id + 1}
-            response = requests.get(url, params=params, timeout=35)
+            params = {"timeout": 20, "offset": last_update_id + 1}
+            response = requests.get(url, params=params, timeout=25)
             data = response.json()
 
             if "result" in data:
@@ -127,7 +127,7 @@ def listen_telegram_commands():
             print(f"Telegram listener error: {e}", flush=True)
             time.sleep(5)
 
-# Start de Telegram command listener in een aparte achtergrond-thread
+
 threading.Thread(target=listen_telegram_commands, daemon=True).start()
 
 
@@ -562,7 +562,6 @@ def run_scanner():
             curr_high = candles_15m[-1]['high']
             curr_low = candles_15m[-1]['low']
 
-            # Check of het niveau een M3 Scalp level is
             is_near, matched_level = is_price_near_any_level(
                 curr_close,
                 curr_high,
