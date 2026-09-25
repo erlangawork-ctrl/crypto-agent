@@ -471,13 +471,13 @@ def evaluate_market_with_gemini(
     ### Execution Optimization Matrix
     | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | **Option D (Retest Reversal - MAX EV_adj)** |
     | :--- | :--- | :--- | :--- | :--- |
-    | **Entry Price** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | **Stop Loss (SL)** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | **Risico Afstand (1R)** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | **TP1 Level** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
-    | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
-    | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
+    | Entry Price | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | Stop Loss (SL) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | Risico Afstand (1R) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | TP1 Level | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | Fill Chance (T) | 85% | 65% | 40% | **85%** |
+    | Gewogen R:R | X.XX R | X.XX R | X.XX R | **X.XX R** |
+    | Adjusted EV (EV_adj) | +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
 
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength/Weakness Bonus).
     """
