@@ -84,7 +84,7 @@ def fetch_binance_klines(symbol, interval, limit=50):
         return []
 
 def check_ny_open_warning():
-    """Stuurt om 15:20 CET een eenmalige waarschuwing dat Wall Street over 10m opent."""
+    """Stuurt om 15:20 CET/CEST een eenmalige waarschuwing dat Wall Street over 10m opent."""
     global ny_open_alert_sent_today
     tz = pytz.timezone('Europe/Amsterdam')
     now = datetime.now(tz)
@@ -95,10 +95,10 @@ def check_ny_open_warning():
 
     if now.hour == 15 and 20 <= now.minute <= 25 and not ny_open_alert_sent_today:
         msg = (
-            "⏰ **15:20 CET WAARSCHUWING (NY OPEN OVER 10 MINUTEN)**\n\n"
-            "• Wall Street opent om 15:30 CET.\n"
-            "• **Regel:** Geen front-run limit orders op S/R randen plaatsen.\n"
-            "• **Actie:** Wacht de eerste M15 liquidity sweep/spike na 15:30 af voor entries."
+            "⏰ **15:20 CET/CEST WAARSCHUWING (NY OPEN OVER 10 MINUTEN)**\n\n"
+            "• Wall Street opent om 15:30 CET/CEST.\n"
+            "• **US Open Rule:** Geen front-run limit orders op S/R randen tussen 15:15 en 16:30.\n"
+            "• **Actie:** Wacht de eerste M15/M30 liquidity sweep/volume-spike na 15:30 af voor entries."
         )
         send_telegram_message(msg)
         ny_open_alert_sent_today = True
@@ -115,42 +115,50 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     pdh = candles_1d[-2]["high"] if len(candles_1d) >= 2 else candles_1d[-1]["high"]
     pdl = candles_1d[-2]["low"] if len(candles_1d) >= 2 else candles_1d[-1]["low"]
 
+    # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
+    last_closed_15m = candles_15m[-2] if len(candles_15m) >= 2 else candles_15m[-1]
+    current_live_candle = candles_15m[-1]
+
     prompt = f"""
-    Je bent een kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto.
-    Analyseer de live data voor {symbol} volgens het strikte 3-traps waarschuwings- en executionprotocol.
+    Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto ({symbol}).
+    Analyseer de live data volgens de strikte system instructions en het 3-traps waarschuwingsprotocol.
 
     CONTEXT BTCUSDT (Voor Trend Alignment & Altcoin Correlatie):
-    - BTC 15m Laatste Close: {btc_context['close']}
+    - BTC Laatste Price: {btc_context['close']}
     - BTC 15m Trend: {btc_context['trend']}
 
     TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
     - Daily (1D) Macro S/R & Levels: PDH (Previous Day High) = ${pdh}, PDL (Previous Day Low) = ${pdl}
     - Laatste 3x 1D Candles: {json.dumps(candles_1d[-3:])}
     - Laatste 5x 4H Candles (HTF Trend & Major S/R): {json.dumps(candles_4h[-5:])}
-    - Laatste 5x 15m Candles (Intraday Structure & Close): {json.dumps(candles_15m[-5:])}
+    - LAATST AFGERONDE 15m Candle (VOOR FULL BODY CLOSE CHECK): {json.dumps(last_closed_15m)}
+    - LOPENDE 15m Candle (ACTUELE PRIJS): {json.dumps(current_live_candle)}
     - Laatste 5x 5m Candles (M3/M5 Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
 
     STRIKTE EVALUATIE REGELS VOOR VERDICT CATEGORIE:
-    1. ⚠️ PRE-TRADE ALERT: Prijs nadert een belangrijk Daily/4H HTF S/R niveau (zoals PDH/PDL of HTF Key Zone) tot op <= 0.5%, MAAR er is nog GEEN 15m close over het level of M3/M5 reversal. Doel = Waarschuwen dat de trader KLAAR MOET ZITTEN.
-    2. 👁️ WATCHLIST: Er is sprake van een geldige 15m Full Body Close (wick <= 30%) op/over het S/R level, maar de M3/M5 reversal candle op de retest moet nog vormen.
-    3. 🚨 GO: 15m close is geldig EN op M3/M5 staat een bevestigde reversal (Engulfing / Pinbar >=66% / MSS op volume >=1.5x) EN Setup Score >= 65% EN EV > +0.30R.
-    4. NO-GO: Geen niveaus nabij, of B-setup (<65% score / slechte BTC correlatie / wick > 30%).
+    1. ⚠️ PRE-TRADE ALERT: De actuele prijs nadert een belangrijk HTF S/R niveau (PDH/PDL, Daily, 4H Swing) tot op <= 0.5%, MAAR er is op de LAATST AFGERONDE 15m candle nog GEEN 15m close over het level of M3/M5 reversal. Doel = Waarschuwen dat de trader KLAAR MOET ZITTEN op M3/M5.
+    2. 👁️ WATCHLIST: De LAATST AFGERONDE 15m candle ({json.dumps(last_closed_15m)}) heeft een geldige Full Body Close (wick <= 30% van kaarsbereik) over/op het S/R level, MAAR de M3/M5 reversal candle op de retest moet nog vormen/bevestigen.
+    3. 🚨 GO: LAATST AFGERONDE 15m close is geldig EN op M3/M5 staat een BEVESTIGDE reversal (Engulfing op volume >=1.5x / Pinbar >=66% / M1-M3 MSS) EN Setup Score >= 65% EN EV > +0.30R.
+    4. NO-GO: Geen niveaus nabij (>0.5% afstand), of B-setup (<65% score / wick > 30% op afgeronde 15m kaars / slechte trend alignment).
 
-    FORMAT BIJ 'PRE-TRADE ALERT':
+    REGELS VOOR TIMING & NY OPEN:
+    - Tussen 15:15 en 16:30 CET/CEST mag ER GEEN FRONT-RUN LIMIT worden geadviseerd op S/R randen. We eisen dat de eerste liquidity sweep is geweest.
+
+    OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     - **Afstand tot S/R Level:** ~X.XX%
     - **Verwachte S/R Zone:** $XX.XX (Bijv. PDH / Daily Level / 4H Swing)
     - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     - **Verwachte Richting:** [Long / Short]
-    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal pattern.
+    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal pattern op de retest.
 
-    FORMAT BIJ 'WATCHLIST' OF 'GO':
+    OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':
     🚨 **[GO | WATCHLIST]** - {symbol}
     **Rating:** [A+ | A | B] | **Score:** X% | **EV:** +X.XX R
 
     - **Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     - **Richting:** [Long / Short]
-    - **Entry:** $XX.XX
+    - **Entry (Confirmed Reversal / Deep Placement):** $XX.XX
     - **Stop Loss:** $XX.XX
     - **TP1 (50%):** $XX.XX | **TP2 (30%):** $XX.XX | **Runner (20%):** $XX.XX
     - **Gewogen R:R:** X.XX R | **Fill Chance (T):** X%
@@ -177,7 +185,7 @@ def run_scanner():
     now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
     print(f"[{now_str}] 🔍 Markt-scan gestart voor alle 9 symbolen...")
     
-    # Check 15:20 CET NY Open waarschuwing
+    # Check 15:20 CET/CEST NY Open waarschuwing
     check_ny_open_warning()
 
     btc_15m = fetch_binance_klines("BTCUSDT", "15m", limit=10)
@@ -200,22 +208,24 @@ def run_scanner():
             if not candles_1d or not candles_4h or not candles_15m or not candles_5m:
                 continue
 
-            last_candle_time = candles_15m[-1]["timestamp"]
+            # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
+            last_closed_candle_time = candles_15m[-2]["timestamp"]
             
-            if last_alerted_candles.get(symbol) == last_candle_time:
+            # Voorkom dubbele meldingen gestuurd voor DEZELFDE afgeronde 15m kaars
+            if last_alerted_candles.get(symbol) == last_closed_candle_time:
                 continue
 
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
             
-            # Vang nu ALLE 3 de alert-types op: Pre-Trade, Watchlist én GO!
-            if analysis and ("⚠️ **PRE-TRADE ALERT**" in analysis or "🚨 **GO**" in analysis or "🚨 **WATCHLIST**" in analysis):
+            # Vang ALLE 3 de alert-types op: Pre-Trade Alert, Watchlist én GO!
+            if analysis and ("PRE-TRADE ALERT" in analysis or "🚨 **GO**" in analysis or "WATCHLIST" in analysis):
                 print(f"[{now_str}] 🚨 ALERT GEGONGEN VOOR {symbol}!")
                 send_telegram_message(analysis)
-                last_alerted_candles[symbol] = last_candle_time
+                last_alerted_candles[symbol] = last_closed_candle_time
             else:
                 print(f"[{now_str}] {symbol}: NO-GO / Geen valide S/R setup.")
 
-            time.sleep(2)
+            time.sleep(1) # Kleine pauze tussen API calls
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}")
 
@@ -224,11 +234,11 @@ if __name__ == "__main__":
         "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
         "**Geïntegreerd 3-Traps Alert Systeem:**\n"
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 0.5% van S/R (Klaarzitten)\n"
-        "2. 👁️ **Watchlist:** 15m Full Body Close bevestigd\n"
+        "2. 👁️ **Watchlist:** Laatst afgeronde 15m Full Body Close bevestigd\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV > +0.30R\n\n"
         "• **Multi-Timeframe Precision:** 1D Daily Macro S/R + 4H HTF Trend + 15m/5m Execution\n"
-        "• **Timing:** Inclusief 15:20 CET NY Open Alert\n"
-        "• **Assets:** 9 Symbolen gemonitord op Render Free Tier (Poort 10000)"
+        "• **Timing:** Inclusief 15:20 CET NY Open Alert & US Open Rules\n"
+        "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
 
@@ -238,4 +248,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Loop error: {e}")
         
-        time.sleep(300)
+        # 180 seconden (3 minuten) = 480 RPD.
+        # Voorkomt 429 ResourceExhausted op Gemini Free Tier & mist geen M15 closes of M3/M5 retests!
+        time.sleep(180)
