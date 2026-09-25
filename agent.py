@@ -222,10 +222,15 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
     4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
 
+    ⚡ SPECIAL RELATIVE STRENGTH / BTC DECOUPLING BONUS (SUPER BUY SIGNAL):
+    - Als {symbol} haar 4H/Daily Support verdedigt of herovert TERWIJL BTC op hetzelfde moment een daling/breakdown laat zien (BTC trend is BEARISH), signaleert dit passieve institutionele absorptie (Relative Strength Divergence).
+    - Verhoog in dit specifieke scenario de verwachte Win Rate (P) automatisch met +12% tot +15% (bijv. Win Rate P voor Rating A stijgt van 58% naar 70%-73%).
+    - Ken in de onderbouwing expliciet het stempel **[SUPER BUY: RELATIVE STRENGTH DIVERGENCE]** toe.
+
     FORMULES FOR MATHEMATISCHE TOETSING:
     - Setup Score (%) = (Trend * 0.35) + (Level * 0.30) + (Displacement * 0.20) + (Timing * 0.15)
     - Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)
-    - Win Rate P: A+ = 70%, A = 58%, B = 40%
+    - Win Rate P: A+ = 70%, A = 58% (tot 73% bij Relative Strength Bonus), B = 40%
     - Gewogen R:R (Scale-Out 50/30/20) = (0.50 * R_TP1) + (0.30 * R_TP2) + (0.20 * R_Runner)
     - EV = (P * R_gewogen) - ((1 - P) * 1R)
     - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
@@ -279,7 +284,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     • **Trend (35%):** X/100% | **Level (30%):** X/100% | **Displacement (20%):** X/100% | **Timing (15%):** X/100%
     • **Win Rate (P):** X% | **Max EV_adj:** **+X.XX R**
 
-    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau en BTC-correlatie).
+    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength Bonus).
     """
 
     # AUTORETRY LUS MET RUIME PAUZE BIJ 429 RATE LIMITS
@@ -355,7 +360,7 @@ def run_scanner():
                 time.sleep(0.5)
                 continue
 
-            print(f"[{now_str}] 🎯 [{symbol}] NIBIJ S/R LEVEL ({matched_level['name']}) -> Gemini AI inschakelen...", flush=True)
+            print(f"[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level['name']}) -> Gemini AI inschakelen...", flush=True)
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
@@ -394,6 +399,7 @@ if __name__ == "__main__":
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
         "• **Multi-Timeframe Python S/R Engine:** Active op 1D, 4H én 1H Pivots (Mist geen enkel niveau).\n"
         "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
+        "• **Relative Strength Engine:** Inclusief BTC Decoupling Bonus (+12-15% Win Rate P op S/R Hold bij BTC Drop).\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
     )
     send_telegram_message(startup_msg)
