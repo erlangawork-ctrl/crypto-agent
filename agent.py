@@ -127,7 +127,7 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + KEY LEVELS)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 2.5 FLASH + RETRY ENGINE)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
@@ -239,16 +239,23 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
 
-    try:
-        # GEBRUIK GEMINI 3.8 FLASH OM DE 404 DEPRECATION ERROR OP TE LOSSEN
-        response = ai_client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"Gemini API error voor {symbol}: {e}", flush=True)
-        return None
+    # AUTORETRY LUS TEGEN 503 UNAVAILABLE SERVER PIEKEN
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = ai_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt,
+            )
+            return response.text.strip()
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                print(f"[{symbol}] Gemini 503 Overbelasting. Poging {attempt + 1}/{max_retries}...", flush=True)
+                time.sleep(2)
+            else:
+                print(f"Gemini API error voor {symbol}: {e}", flush=True)
+                return None
+    return None
 
 # ==========================================
 # 5. MAIN SCANNER LOOP
@@ -311,7 +318,7 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van Berekend S/R Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Berekend Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Model Update:** Actief op Gemini 3.8 Flash (404 Error Opgelost)\n"
+        "• **Inclusief:** Auto-Retry Engine voor Gemini 503 Server Pieken.\n"
         "• **Inclusief:** Hardcoded Key-Level Detectie Engine, Fast Retest Scans & EV_adj Metric.\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
