@@ -50,6 +50,7 @@ SYMBOLS = [
     "SOLUSDT",
 ]
 
+# Geheugen voor deduplicatie met unieke timestamps
 last_alerted_candles = {}
 ny_open_alert_sent_today = False
 
@@ -113,6 +114,17 @@ def find_key_levels(candles_1d, candles_4h):
             levels.append({"name": f"4H Swing Low (${candles_4h[i]['low']})", "price": candles_4h[i]["low"], "importance": "HIGH HTF"})
             
     return levels
+
+def cleanup_expired_alerts():
+    """Verwijdert alerts uit het geheugen die ouder zijn dan 15 minuten (900 seconden)."""
+    current_time = time.time()
+    expired_keys = [
+        key for key, timestamp in last_alerted_candles.items()
+        if current_time - timestamp > 900
+    ]
+    for key in expired_keys:
+        del last_alerted_candles[key]
+        print(f"🧹 Geheugen opgeruimd voor afgelopen alert-key: {key}", flush=True)
 
 def check_ny_open_warning():
     """Stuurt om 15:20 CET/CEST een eenmalige waarschuwing dat Wall Street over 10m opent."""
@@ -263,6 +275,9 @@ def run_scanner():
     now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
     print(f"\n[{now_str}] 🔍 Markt-scan gestart voor alle 9 symbolen...", flush=True)
     
+    # Ruim oude alerts (>15 minuten) op uit het geheugen
+    cleanup_expired_alerts()
+
     # Check 15:20 CET/CEST NY Open waarschuwing
     check_ny_open_warning()
 
@@ -289,19 +304,23 @@ def run_scanner():
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
-            
-            # Voorkom dat er dubbele meldingen gestuurd worden voor DEZELFDE afgeronde 15m kaars
-            if last_alerted_candles.get(symbol) == last_closed_candle_time:
-                print(f"[{symbol}] Reeds geanalyseerd voor deze 15m candle.", flush=True)
-                continue
 
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
             
+            # SLIMMER DEDUPLICATIE FILTER MET 15-MINUTEN EXPIRATIE
+            is_go_alert = analysis and ("🚨 **GO**" in analysis or "GO / NO-GO VERDICT: **GO**" in analysis)
+            alert_key = f"{symbol}_{last_closed_candle_time}" if not is_go_alert else f"{symbol}_{last_closed_candle_time}_GO"
+
             # Vang ALLE 3 de alert-types op: Pre-Trade Alert, Watchlist én GO!
             if analysis and ("PRE-TRADE ALERT" in analysis or "🚨 **GO**" in analysis or "WATCHLIST" in analysis or "GO / NO-GO VERDICT" in analysis):
+                if alert_key in last_alerted_candles:
+                    print(f"[{symbol}] Reeds geanalyseerd en gemeld binnen de afgelopen 15 minuten.", flush=True)
+                    continue
+
                 print(f"[{now_str}] 🚨 ALERT GEGENEREERD EN VERSTUURD VOOR {symbol}!", flush=True)
                 send_telegram_message(analysis)
-                last_alerted_candles[symbol] = last_closed_candle_time
+                # Sla op met UNIX timestamp voor automatische 15-minuten expiratie
+                last_alerted_candles[alert_key] = time.time()
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
@@ -317,9 +336,9 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Rate-Limit Fix:** Sleep van 4s ingebouwd om 429 Resource Exhausted te voorkomen.\n"
+        "• **15-Minuten Geheugen Expiratie:** Oude alerts vervallen na 15 min; hernieuwde benaderingen triggeren direct weer!\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj.\n"
-        "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - Safe op Gemini Free Tier)"
+        "• **API Optimisatie:** 4s Sleep Interval om 429 Rate Limits te voorkomen."
     )
     send_telegram_message(startup_msg)
 
