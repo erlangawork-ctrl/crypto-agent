@@ -135,7 +135,7 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + FRONT-RUN & OPTION D MATRIX)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + RATE-LIMIT RETRY)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
@@ -233,20 +233,23 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
 
-    # AUTORETRY LUS TEGEN 503 UNAVAILABLE SERVER PIEKEN
+    # AUTORETRY LUS TEGEN 503 SERVER PIEKEN EN 429 RATE LIMITS
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # GEBRUIK HET JUISTE GEMINI-3.8-FLASH MODEL OMDAT 2.5 AANGEEFT 404 NOT_FOUND TE ZIJN
             response = ai_client.models.generate_content(
                 model='gemini-3.8-flash',
                 contents=prompt,
             )
             return response.text.strip()
         except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                print(f"[{symbol}] Rate limit bereikt (429). Wachten op quota herstel (poging {attempt + 1}/{max_retries})...", flush=True)
+                time.sleep(15)
+            elif "503" in err_str or "UNAVAILABLE" in err_str:
                 print(f"[{symbol}] Gemini 503 Overbelasting. Poging {attempt + 1}/{max_retries}...", flush=True)
-                time.sleep(2)
+                time.sleep(3)
             else:
                 print(f"Gemini API error voor {symbol}: {e}", flush=True)
                 return None
@@ -302,7 +305,8 @@ def run_scanner():
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
-            time.sleep(1) # Kleine pauze tussen API calls
+            # PAUZE VAN 4 SECONDEN OM ONDER DE 20 REQUESTS/MINUUT (RPM) FREE TIER LIMIT TE BLIJVEN
+            time.sleep(4)
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}", flush=True)
 
@@ -313,8 +317,8 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
+        "• **Rate-Limit Fix:** Sleep van 4s ingebouwd om 429 Resource Exhausted te voorkomen.\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj.\n"
-        "• **Model Update:** Gemini 3.8 Flash Actief (404 Error Definitief Opgelost).\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
