@@ -679,7 +679,7 @@ def run_scanner():
             else:
                 print(
                     f'[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R'
-                    ' angular setup.',
+                    ' setup.',
                     flush=True,
                 )
 
