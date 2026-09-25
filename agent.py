@@ -44,7 +44,7 @@ try:
             service_account_info,
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
         )
-        # Client verbinden met Vertex AI middels de geauthenticeerde Credentials
+        # Client verbinden met Vertex AI middels geauthenticeerde Credentials
         ai_client = genai.Client(
             vertexai=True, 
             project=GCP_PROJECT_ID, 
@@ -53,7 +53,6 @@ try:
         )
         print(f"SUCCESS: Verbonden met Vertex AI via Service Account (Project: {GCP_PROJECT_ID})", flush=True)
     else:
-        # Fallback voor lokale tests
         ai_client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_LOCATION)
         print(f"SUCCESS: Verbonden met Vertex AI (Default Auth)", flush=True)
 except Exception as e:
@@ -115,7 +114,6 @@ def find_key_levels(candles_1d, candles_4h, candles_1h):
     seen_prices = set()
 
     def add_level(name, price, importance):
-        # Voorkom exact dubbele levels binnen 0.1% van elkaar
         for p in seen_prices:
             if abs(p - price) / price < 0.001:
                 return
@@ -209,70 +207,50 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.1 PRO ON VERTEX AI)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI PRO ON VERTEX AI)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels):
     if not ai_client:
         print("Vertex AI client is niet geïnitialiseerd.", flush=True)
         return None
 
-    # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
     last_closed_15m = candles_15m[-2] if len(candles_15m) >= 2 else candles_15m[-1]
     current_live_candle = candles_15m[-1]
 
     prompt = f"""
     Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto ({symbol}).
-    Analyseer de live data volgens de exacte System Instructions. BEREKEN EXPLICIT DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.
+    Analyseer de live data volgens de System Instructions. BEREKEN EXPLICIT DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.
 
-    CONTEXT BTCUSDT (Voor Trend Alignment & Altcoin Correlatie):
-    - BTC Laatste Price: ${btc_context['close']}
-    - BTC 15m Trend: {btc_context['trend']}
+    CONTEXT BTCUSDT: Price = ${btc_context['close']}, 15m Trend = {btc_context['trend']}
+    HARD KEY LEVELS VOOR {symbol}: {json.dumps(calculated_levels)}
 
-    BEREKENDE HARD S/R KEY LEVELS VOOR {symbol} (INCLUSIEF 1D, 4H EN 1H MACRO/INTRADAY LEVELS):
-    {json.dumps(calculated_levels, indent=2)}
+    TARGET ASSET DATA ({symbol}):
+    - 1D Candles (5x): {json.dumps(candles_1d[-5:])}
+    - 4H Candles (5x): {json.dumps(candles_4h[-5:])}
+    - 15m Last Closed: {json.dumps(last_closed_15m)}
+    - 15m Live Candle: {json.dumps(current_live_candle)}
+    - M5 Candles (Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
 
-    TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
-    - Laatste 5x 1D Candles: {json.dumps(candles_1d[-5:])}
-    - Laatste 5x 4H Candles (HTF Trend & Major S/R): {json.dumps(candles_4h[-5:])}
-    - LAATST AFGERONDE 15m Candle (VOOR FULL BODY CLOSE CHECK): {json.dumps(last_closed_15m)}
-    - LOPENDE 15m Candle (ACTUELE PRIJS & HIGH/LOW WICKS): {json.dumps(current_live_candle)}
-    - Laatste 5x 5m Candles (M3/M5 Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
-
-    KWANTITATIEVE SCORING MATRIX (4 FACTOREN):
-    1. Trend Alignment (35%): 3/3 Aligned = 100%, 2/3 = 66.7%, 1/3 = 33.3%
-    2. Level Kwaliteit (30%): 1D Daily HTF Level / PDH / PDL = 100% (CRITICAL), 4H Swing = 80%, 1H Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
-    3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
-    4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
-
-    ⚡ SPECIAL RELATIVE STRENGTH / BTC DECOUPLING BONUS (SUPER BUY SIGNAL):
-    - Als {symbol} haar 4H/Daily Support verdedigt of herovert TERWIJL BTC op hetzelfde moment een daling/breakdown laat zien (BTC trend is BEARISH), signaleert dit passieve institutionele absorptie (Relative Strength Divergence).
-    - Verhoog in dit specifieke scenario de verwachte Win Rate (P) automatisch met +12% tot +15% (bijv. Win Rate P voor Rating A stijgt van 58% naar 70%-73%).
-    - Ken in de onderbouwing expliciet het stempel **[SUPER BUY: RELATIVE STRENGTH DIVERGENCE]** toe.
-
-    FORMULES FOR MATHEMATISCHE TOETSING:
-    - Setup Score (%) = (Trend * 0.35) + (Level * 0.30) + (Displacement * 0.20) + (Timing * 0.15)
-    - Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)
-    - Win Rate P: A+ = 70%, A = 58% (tot 73% bij Relative Strength Bonus), B = 40%
-    - Gewogen R:R (Scale-Out 50/30/20) = (0.50 * R_TP1) + (0.30 * R_TP2) + (0.20 * R_Runner)
-    - EV = (P * R_gewogen) - ((1 - P) * 1R)
-    - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
+    KWANTITATIEVE SCORING MATRIX:
+    1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)
+    Rating: A+ (>=85%), A (65-84%), B (<65% -> NO-GO) | EV_adj = T * EV.
 
     EXECUTION OPTIONS DEFINITIE:
-    - Option A (Conservative): Markt/Bovenkant zone entry, ruime structurele SL. High T (85%), lagere R:R.
-    - Option B (Sweet Spot): Exacte S/R retest entry, structurele SL. Medium T (65%), gebalanceerde R:R.
-    - Option C (Aggressive): Exacte S/R retest entry, hele strakke M3/M5 retest wick SL. Lagere T (40%), hoge R:R.
-    - Option D (Front-Run + Aggressive SL - MAX EV_adj): Front-run entry (0.15% - 0.25% boven/onder retest level) gecombineerd met de strakke M3/M5 retest wick SL. Dit geeft een hoge Fill Chance T (~85%) én hele strakke 1R, wat resulteert in de MAXIMAAL MOGELIJKE EV_adj!
+    - Option A (Conservative): High T (85%), lagere R:R.
+    - Option B (Sweet Spot): Medium T (65%), gebalanceerde R:R.
+    - Option C (Aggressive): Low T (40%), hoge R:R.
+    - Option D (Front-Run + Aggressive SL - MAX EV_adj): Front-run entry (0.15% - 0.25% boven/onder retest level) gecombineerd met de strakke M3/M5 retest wick SL. Gives High T (~85%) + Tight SL = MAX EV_adj!
 
     3-TRAPS VERDICT REGELS:
-    1. ⚠️ PRE-TRADE ALERT: Prijs/wick binnen <= 1.0% van KEY LEVEL, maar geen 15m close/reversal.
+    1. ⚠️ PRE-TRADE ALERT: Prijs/wick binnen <= 1.0% van KEY LEVEL, maar nog geen 15m close/reversal.
     2. 👁️ WATCHLIST: 15m Full Body Close GEVALIDEERD (wick <= 30%), maar M3/M5 reversal nog in aanbouw.
     3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R.
-    4. NO-GO: Score < 65% (B-Rating) of geen KEY LEVELS nabij.
+    4. NO-GO: Score < 65% of geen KEY LEVELS nabij.
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level: $XX.XX)
-    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D Daily Level / PDH / PDL / 4H/1H Swing)
+    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D / 4H / 1H Level)
     • **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     • **Verwachte Richting:** [Long / Short]
     • **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
@@ -283,48 +261,43 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
     • **Huidige Prijs:** ${current_live_candle['close']}
     • **Aanbevolen Strategy:** **Option D (Front-Run + Aggressive SL)**
-    • **Front-Run Entry:** **$XX.XX** *(0.20% boven retest level voor maximale vulkans)*
-    • **Aggressive SL:** **$XX.XX** *(Strak onder lokale M3/M5 wick)*
-    • **Max Adjusted EV (EV_adj):** **+X.XX R** *(Leidende Beslis-Metric)*
+    • **Front-Run Entry:** **$XX.XX** *(0.20% boven retest level)*
+    • **Aggressive SL:** **$XX.XX** *(Strak onder M3/M5 wick)*
+    • **Max Adjusted EV (EV_adj):** **+X.XX R**
 
     ### Execution Optimization Matrix
     | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | **Option D (Front-Run + Aggr. SL - MAX EV_adj)** |
     | :--- | :--- | :--- | :--- | :--- |
     | **Entry Price** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX (Tight SL) | **$XX.XX (Tight SL)** |
+    | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX (Tight SL)** |
     | **Risico Afstand (1R)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **TP1 (50%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **TP2 (30%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **Runner (20%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
     | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
-    | **Expected Value (EV)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R** |
     | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
 
-    ### Metrics & Statistische Toetsing
-    • **Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim] | **Setup Score:** X% ([A+ | A])
-    • **Trend (35%):** X/100% | **Level (30%):** X/100% | **Displacement (20%):** X/100% | **Timing (15%):** X/100%
-    • **Win Rate (P):** X% | **Max EV_adj:** **+X.XX R**
-
-    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength Bonus).
+    **Korte Analyse:** (Max 2 zinnen met exacte reden en BTC-correlatie).
     """
 
-    max_retries = 2
-    for attempt in range(max_retries):
+    # Model identifiers voor Vertex AI met automatische fallback
+    models_to_try = ['gemini-3.1-pro-preview', 'gemini-2.5-pro']
+    
+    for model_name in models_to_try:
         try:
-            # AANROEP VAN GEMINI 3.1 PRO MODEL VIA VERTEX AI
             response = ai_client.models.generate_content(
-                model='gemini-3.1-pro',
+                model=model_name,
                 contents=prompt,
             )
             return response.text.strip()
         except Exception as e:
             err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                print(f"[{symbol}] Quota overschreden. Korte pauze (poging {attempt + 1}/{max_retries})...", flush=True)
+            if "NOT_FOUND" in err_str or "404" in err_str:
+                print(f"Model {model_name} niet gevonden op Vertex AI, fallback naar volgend model...", flush=True)
+                continue
+            elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                print(f"[{symbol}] Quota bereikt op {model_name}. Korte pauze...", flush=True)
                 time.sleep(3)
             else:
-                print(f"Vertex AI Gemini Pro Error voor {symbol}: {e}", flush=True)
+                print(f"Vertex AI Error ({model_name}) voor {symbol}: {e}", flush=True)
                 return None
     return None
 
@@ -379,12 +352,12 @@ def run_scanner():
                 time.sleep(0.5)
                 continue
 
-            print(f"[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level['name']}) -> Gemini 3.1 Pro Inschakelen...", flush=True)
+            print(f"[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level['name']}) -> Gemini Pro Inschakelen...", flush=True)
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
 
-            # Vraag Gemini 3.1 Pro alleen om analyse als Python bevestigt dat we nabij een level zijn
+            # Vraag Gemini alleen om analyse als Python bevestigt dat we nabij een level zijn
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels)
             
             # SLIMMER DEDUPLICATIE FILTER MET 15-MINUTEN EXPIRATIE
@@ -411,12 +384,12 @@ def run_scanner():
 
 if __name__ == "__main__":
     startup_msg = (
-        "🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (SERVICE ACCOUNT)!**\n\n"
+        "🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Model Upgrade:** Gemini 3.1 Pro actief via Vertex AI Service Account ($300 Credits).\n"
+        "• **Model Upgrade:** Gemini Pro actief via Vertex AI Service Account ($300 Credits).\n"
         "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
     )
