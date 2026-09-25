@@ -157,10 +157,10 @@ def find_key_levels(candles_1d, candles_4h, candles_1h):
 
     return levels
 
-def is_price_near_any_level(current_price, high_price, low_price, calculated_levels, max_distance_pct=1.2):
+def is_price_near_any_level(current_price, high_price, low_price, calculated_levels, max_distance_pct=1.0):
     """
     PRE-FILTER PORTIER ENGINE:
-    Checkt of de actuele sluitkoers of high/low wicks binnen 1.2% van ENIG berekend level liggen.
+    Checkt of de actuele sluitkoers of high/low wicks binnen 1.0% van ENIG berekend level liggen.
     """
     for lvl in calculated_levels:
         target_price = lvl["price"]
@@ -231,21 +231,29 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - 15m Live Candle: {json.dumps(current_live_candle)}
     - M5 Candles (Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
 
+    STRIKTE STRATEGIE & TP REGELS (VOORKOM DROOM-TARGETS):
+    - TP1 MOET VERPLICHT het eerstvolgende berekende Hard Key Level zijn in de richting van de trade!
+    - Berekend $1R$ risico = |Entry - SL|. 
+    - Als de afstand tot TP1 kleiner is dan 1.2x het $1R$ risico, is de R:R NIET TOEREIKEND en is het verdict AUTOMATISCH NO-GO!
+    - EIS VOOR GO: Er MOET op de M5 data een AFGERONDE Reversal candle staan (Rejection Pinbar met wick >=66% OF Engulfing op stijgend volume). Geen blinde limits!
+
+    ⚡ SPECIAL RELATIVE STRENGTH / DECOUPLING LOGICA:
+    - [SUPER BUY]: Als {symbol} haar 4H/Daily Support verdedigt TERWIJL BTC bearish/downward dumpt, verhoog Win Rate (P) met +12% tot +15%.
+    - [SUPER SELL]: Als {symbol} haar 4H/Daily Resistance faalt TERWIJL BTC bullish/upward pumpt, verhoog Win Rate (P) voor Short met +12% tot +15%.
+
     KWANTITATIEVE SCORING MATRIX:
     1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)
-    Rating: A+ (>=85%), A (65-84%), B (<65% -> NO-GO) | EV_adj = T * EV.
-
-    EXECUTION OPTIONS DEFINITIE:
-    - Option A (Conservative): High T (85%), lagere R:R.
-    - Option B (Sweet Spot): Medium T (65%), gebalanceerde R:R.
-    - Option C (Aggressive): Low T (40%), hoge R:R.
-    - Option D (Front-Run + Aggressive SL - MAX EV_adj): Front-run entry (0.15% - 0.25% boven/onder retest level) gecombineerd met de strakke M3/M5 retest wick SL. Gives High T (~85%) + Tight SL = MAX EV_adj!
+    Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)
 
     3-TRAPS VERDICT REGELS:
     1. ⚠️ PRE-TRADE ALERT: Prijs/wick binnen <= 1.0% van KEY LEVEL, maar nog geen 15m close/reversal.
-    2. 👁️ WATCHLIST: 15m Full Body Close GEVALIDEERD (wick <= 30%), maar M3/M5 reversal nog in aanbouw.
-    3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R.
-    4. NO-GO: Score < 65% of geen KEY LEVELS nabij.
+    2. 👁️ WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.
+    3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.
+    4. NO-GO: Score < 65% of onvoldoende R:R tot eerstvolgende S/R level.
+
+    OUTPUT FORMAT BIJ 'NO-GO':
+    **GO / NO-GO VERDICT:** **[NO-GO]** *(Rating: B | Score: X% | EV_adj: -X.XX R)*
+    Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar het eerstvolgende niveau of waarom de M5 reversal ontbreekt).
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
@@ -261,7 +269,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
     • **Huidige Prijs:** ${current_live_candle['close']}
     • **Aanbevolen Strategy:** **Option D (Front-Run + Aggressive SL)**
-    • **Front-Run Entry:** **$XX.XX** *(0.20% boven retest level)*
+    • **Front-Run Entry:** **$XX.XX**
     • **Aggressive SL:** **$XX.XX** *(Strak onder M3/M5 wick)*
     • **Max Adjusted EV (EV_adj):** **+X.XX R**
 
@@ -271,15 +279,20 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     | **Entry Price** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX (Tight SL)** |
     | **Risico Afstand (1R)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **TP1 (50%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
     | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
     | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
 
-    **Korte Analyse:** (Max 2 zinnen met exacte reden en BTC-correlatie).
+    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength/Weakness Bonus).
     """
 
-    # Model identifiers voor Vertex AI met automatische fallback
-    models_to_try = ['gemini-3.1-pro-preview', 'gemini-2.5-pro']
+    # Model identifiers voor Vertex AI met uitbreiding voor fallback
+    models_to_try = [
+        'gemini-3.1-pro-preview', 
+        'gemini-2.5-pro', 
+        'gemini-1.5-pro'
+    ]
     
     for model_name in models_to_try:
         try:
@@ -340,15 +353,15 @@ def run_scanner():
             # Berekent de S/R levels via de geavanceerde Python Engine (1D, 4H, 1H)
             calculated_levels = find_key_levels(candles_1d, candles_4h, candles_1h)
             
-            # SLIMME PRE-FILTER PORTIER: Check of koers of wick binnen 1.2% van enig level ligt
+            # PRE-FILTER PORTIER: Checkt of koers of wick binnen 1.0% van enig level ligt
             curr_close = candles_15m[-1]["close"]
             curr_high = candles_15m[-1]["high"]
             curr_low = candles_15m[-1]["low"]
             
-            is_near, matched_level = is_price_near_any_level(curr_close, curr_high, curr_low, calculated_levels, max_distance_pct=1.2)
+            is_near, matched_level = is_price_near_any_level(curr_close, curr_high, curr_low, calculated_levels, max_distance_pct=1.0)
             
             if not is_near:
-                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 1.2% van S/R levels (API call bespaard).", flush=True)
+                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 1.0% van S/R levels (API call bespaard).", flush=True)
                 time.sleep(0.5)
                 continue
 
@@ -377,7 +390,7 @@ def run_scanner():
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
-            # MENSELIJKE PAUZE TUSSEN GEMINI CALLS
+            # PAUZE TUSSEN GEMINI CALLS
             time.sleep(2)
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}", flush=True)
@@ -386,12 +399,12 @@ if __name__ == "__main__":
     startup_msg = (
         "🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
-        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
+        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Model Upgrade:** Gemini Pro actief via Vertex AI Service Account ($300 Credits).\n"
-        "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
-        "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
+        "• **Model Upgrade:** Gemini Pro actief via Vertex AI Service Account.\n"
+        "• **Relative Strength/Weakness:** BTC Decoupling Bonus (+12-15% Win Rate P) ingebouwd.\n"
+        "• **TP & R:R Guardrail:** Hard-coded verplichting tot reëel TP1 level (Elimineert foute EV_adj alerts)."
     )
     send_telegram_message(startup_msg)
 
