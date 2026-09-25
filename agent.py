@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 import pytz
 from flask import Flask
-from google import genai  # Nieuwe officiële Google GenAI SDK
+from google import genai
 
 # ==========================================
 # 1. MINI FLASK WEBSERVER (Render 24/7 Keep-Alive)
@@ -106,10 +106,14 @@ def check_ny_open_warning():
 # ==========================================
 # 4. AI QUANT EVALUATIE ENGINE (3-TRAPS PROTOCOL)
 # ==========================================
-def evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context):
+def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
         print("Gemini client is niet geïnitialiseerd.")
         return None
+
+    # Bereken de exacte Previous Day High / Low uit de 1D data
+    pdh = candles_1d[-2]["high"] if len(candles_1d) >= 2 else candles_1d[-1]["high"]
+    pdl = candles_1d[-2]["low"] if len(candles_1d) >= 2 else candles_1d[-1]["low"]
 
     prompt = f"""
     Je bent een kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto.
@@ -119,20 +123,23 @@ def evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context):
     - BTC 15m Laatste Close: {btc_context['close']}
     - BTC 15m Trend: {btc_context['trend']}
 
-    TARGET ASSET DATA ({symbol}):
-    - Laatste 5x 15m Candles: {json.dumps(candles_15m[-5:])}
-    - Laatste 5x 5m Candles: {json.dumps(candles_5m[-5:])}
+    TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
+    - Daily (1D) Macro S/R & Levels: PDH (Previous Day High) = ${pdh}, PDL (Previous Day Low) = ${pdl}
+    - Laatste 3x 1D Candles: {json.dumps(candles_1d[-3:])}
+    - Laatste 5x 4H Candles (HTF Trend & Major S/R): {json.dumps(candles_4h[-5:])}
+    - Laatste 5x 15m Candles (Intraday Structure & Close): {json.dumps(candles_15m[-5:])}
+    - Laatste 5x 5m Candles (M3/M5 Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
 
     STRIKTE EVALUATIE REGELS VOOR VERDICT CATEGORIE:
-    1. ⚠️ PRE-TRADE ALERT: Prijs nadert een belangrijk HTF/Swing S/R niveau tot op <= 0.5%, MAAR er is nog GEEN 15m close over het level of M3/M5 reversal. Doel = Waarschuwen dat de trader KLAAR MOET ZITTEN.
+    1. ⚠️ PRE-TRADE ALERT: Prijs nadert een belangrijk Daily/4H HTF S/R niveau (zoals PDH/PDL of HTF Key Zone) tot op <= 0.5%, MAAR er is nog GEEN 15m close over het level of M3/M5 reversal. Doel = Waarschuwen dat de trader KLAAR MOET ZITTEN.
     2. 👁️ WATCHLIST: Er is sprake van een geldige 15m Full Body Close (wick <= 30%) op/over het S/R level, maar de M3/M5 reversal candle op de retest moet nog vormen.
-    3. 🚨 GO: 15m close is geldig EN op M3/M5 timeframe staat een bevestigde reversal (Engulfing / Pinbar >=66% / MSS op volume >=1.5x) EN Setup Score >= 65% EN EV > +0.30R.
+    3. 🚨 GO: 15m close is geldig EN op M3/M5 staat een bevestigde reversal (Engulfing / Pinbar >=66% / MSS op volume >=1.5x) EN Setup Score >= 65% EN EV > +0.30R.
     4. NO-GO: Geen niveaus nabij, of B-setup (<65% score / slechte BTC correlatie / wick > 30%).
 
     FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     - **Afstand tot S/R Level:** ~X.XX%
-    - **Verwachte S/R Zone:** $XX.XX
+    - **Verwachte S/R Zone:** $XX.XX (Bijv. PDH / Daily Level / 4H Swing)
     - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     - **Verwachte Richting:** [Long / Short]
     - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal pattern.
@@ -149,7 +156,7 @@ def evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context):
     - **Gewogen R:R:** X.XX R | **Fill Chance (T):** X%
     - **Adjusted EV (EV_adj):** +X.XX R
 
-    **Korte Analyse:** (Max 2 zinnen met exacte reden en BTC-correlatie).
+    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
 
     try:
@@ -182,10 +189,12 @@ def run_scanner():
 
     for symbol in SYMBOLS:
         try:
+            candles_1d = fetch_binance_klines(symbol, "1d", limit=10)
+            candles_4h = fetch_binance_klines(symbol, "4h", limit=10)
             candles_15m = fetch_binance_klines(symbol, "15m", limit=20)
             candles_5m = fetch_binance_klines(symbol, "5m", limit=20)
             
-            if not candles_15m or not candles_5m:
+            if not candles_1d or not candles_4h or not candles_15m or not candles_5m:
                 continue
 
             last_candle_time = candles_15m[-1]["timestamp"]
@@ -193,7 +202,7 @@ def run_scanner():
             if last_alerted_candles.get(symbol) == last_candle_time:
                 continue
 
-            analysis = evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context)
+            analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
             
             # Vang nu ALLE 3 de alert-types op: Pre-Trade, Watchlist én GO!
             if analysis and ("⚠️ **PRE-TRADE ALERT**" in analysis or "🚨 **GO**" in analysis or "🚨 **WATCHLIST**" in analysis):
@@ -211,6 +220,7 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 0.5% van S/R (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close bevestigd\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV > +0.30R\n\n"
+        "• **Multi-Timeframe Precision:** 1D Daily Macro S/R + 4H HTF Trend + 15m/5m Execution\n"
         "• **Timing:** Inclusief 15:20 CET NY Open Alert\n"
         "• **Assets:** 9 Symbolen gemonitord op Render Free Tier (Poort 10000)"
     )
