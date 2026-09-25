@@ -1,4 +1,6 @@
-ccxt
-google-genai
+google-generativeai
+requests
+requests-async
 pandas
 pytz
+ccxt
