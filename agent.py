@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 import pytz
 from flask import Flask
-import google.generativeai as genai
+from google import genai  # Nieuwe officiële Google GenAI SDK
 
 # ==========================================
 # 1. MINI FLASK WEBSERVER (Render 24/7 Keep-Alive)
@@ -31,9 +31,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+ai_client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    ai_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
     print("WARNING: GEMINI_API_KEY niet gevonden!")
 
@@ -107,6 +107,10 @@ def check_ny_open_warning():
 # 4. AI QUANT EVALUATIE ENGINE (3-TRAPS PROTOCOL)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context):
+    if not ai_client:
+        print("Gemini client is niet geïnitialiseerd.")
+        return None
+
     prompt = f"""
     Je bent een kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto.
     Analyseer de live data voor {symbol} volgens het strikte 3-traps waarschuwings- en executionprotocol.
@@ -149,7 +153,10 @@ def evaluate_market_with_gemini(symbol, candles_15m, candles_5m, btc_context):
     """
 
     try:
-        response = model.generate_content(prompt)
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         return response.text.strip()
     except Exception as e:
         print(f"Gemini API error voor {symbol}: {e}")
