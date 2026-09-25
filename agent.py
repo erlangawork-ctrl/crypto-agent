@@ -7,6 +7,7 @@ from datetime import datetime
 import pytz
 from flask import Flask
 from google import genai
+from google.oauth2 import service_account
 
 # ==========================================
 # 1. MINI FLASK WEBSERVER (Render 24/7 Keep-Alive)
@@ -25,22 +26,38 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# 2. CONFIGURATIE & ENVIRONMENT VARIABLES (GOOGLE CLOUD VERTEX AI)
+# 2. CONFIGURATIE & SERVICE ACCOUNT AUTHENTICATION (VERTEX AI)
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Ophalen uit de Environment Variable GCP_PROJECT_ID op Render
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "crypto-ai-agent-509618")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+GCP_SERVICE_ACCOUNT_JSON = os.getenv("GCP_SERVICE_ACCOUNT_JSON")
 
 ai_client = None
 try:
-    # Verbinding maken via Google Cloud Vertex AI (Verbruikt de $300 Starter Credits!)
-    ai_client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_LOCATION)
-    print(f"SUCCESS: Verbonden met Google Cloud Vertex AI (Project: {GCP_PROJECT_ID})", flush=True)
+    if GCP_SERVICE_ACCOUNT_JSON:
+        # Laad Service Account Credentials uit de Environment Variable op Render
+        service_account_info = json.loads(GCP_SERVICE_ACCOUNT_JSON)
+        credentials = service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        # Client verbinden met Vertex AI middels de geauthenticeerde Credentials
+        ai_client = genai.Client(
+            vertexai=True, 
+            project=GCP_PROJECT_ID, 
+            location=GCP_LOCATION,
+            credentials=credentials
+        )
+        print(f"SUCCESS: Verbonden met Vertex AI via Service Account (Project: {GCP_PROJECT_ID})", flush=True)
+    else:
+        # Fallback voor lokale tests
+        ai_client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_LOCATION)
+        print(f"SUCCESS: Verbonden met Vertex AI (Default Auth)", flush=True)
 except Exception as e:
-    print(f"WARNING: Vertex AI Initialisatie mislukt: {e}", flush=True)
+    print(f"WARNING: Vertex AI Credentials Initialisatie mislukt: {e}", flush=True)
 
 # Alle 9 gemonitorde assets
 SYMBOLS = [
@@ -295,7 +312,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     max_retries = 2
     for attempt in range(max_retries):
         try:
-            # AANROEP VAN HET VLAGGENSCHIP GEMINI 3.1 PRO MODEL OP GOOGLE CLOUD VERTEX AI
+            # AANROEP VAN GEMINI 3.1 PRO MODEL VIA VERTEX AI
             response = ai_client.models.generate_content(
                 model='gemini-3.1-pro',
                 contents=prompt,
@@ -394,14 +411,13 @@ def run_scanner():
 
 if __name__ == "__main__":
     startup_msg = (
-        "🤖 **MyCryptoAgent Master Service IS LIVE ON GOOGLE CLOUD (VERTEX AI)!**\n\n"
+        "🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (SERVICE ACCOUNT)!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Model Upgrade:** Gemini 3.1 Pro actief via Vertex AI ($300 Cloud Credits).\n"
+        "• **Model Upgrade:** Gemini 3.1 Pro actief via Vertex AI Service Account ($300 Credits).\n"
         "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
-        "• **Relative Strength Engine:** Inclusief BTC Decoupling Bonus (+12-15% Win Rate P op S/R Hold bij BTC Drop).\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
     )
     send_telegram_message(startup_msg)
