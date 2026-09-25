@@ -35,7 +35,7 @@ ai_client = None
 if GEMINI_API_KEY:
     ai_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
-    print("WARNING: GEMINI_API_KEY niet gevonden!")
+    print("WARNING: GEMINI_API_KEY niet gevonden!", flush=True)
 
 # Alle 9 gemonitorde assets
 SYMBOLS = [
@@ -64,7 +64,7 @@ def send_telegram_message(text):
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram error: {e}", flush=True)
 
 def fetch_binance_klines(symbol, interval, limit=50):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
@@ -80,7 +80,7 @@ def fetch_binance_klines(symbol, interval, limit=50):
             "volume": float(c[5])
         } for c in data]
     except Exception as e:
-        print(f"Binance fetch error {symbol}: {e}")
+        print(f"Binance fetch error {symbol}: {e}", flush=True)
         return []
 
 def check_ny_open_warning():
@@ -108,7 +108,7 @@ def check_ny_open_warning():
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
-        print("Gemini client is niet geïnitialiseerd.")
+        print("Gemini client is niet geïnitialiseerd.", flush=True)
         return None
 
     # Bereken de exacte Previous Day High / Low uit de 1D data
@@ -222,7 +222,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
         )
         return response.text.strip()
     except Exception as e:
-        print(f"Gemini API error voor {symbol}: {e}")
+        print(f"Gemini API error voor {symbol}: {e}", flush=True)
         return None
 
 # ==========================================
@@ -231,14 +231,14 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
     now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{now_str}] 🔍 Markt-scan gestart voor alle 9 symbolen...")
+    print(f"\n[{now_str}] 🔍 Markt-scan gestart voor alle 9 symbolen...", flush=True)
     
     # Check 15:20 CET/CEST NY Open waarschuwing
     check_ny_open_warning()
 
     btc_15m = fetch_binance_klines("BTCUSDT", "15m", limit=10)
     if not btc_15m:
-        print("Geen BTC data ontvangen, scan overgeslagen.")
+        print("Geen BTC data ontvangen, scan overgeslagen.", flush=True)
         return
 
     btc_context = {
@@ -254,6 +254,7 @@ def run_scanner():
             candles_5m = fetch_binance_klines(symbol, "5m", limit=20)
             
             if not candles_1d or not candles_4h or not candles_15m or not candles_5m:
+                print(f"[{symbol}] Onvolledige data, overgeslagen.", flush=True)
                 continue
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
@@ -261,21 +262,22 @@ def run_scanner():
             
             # Voorkom dat er dubbele meldingen gestuurd worden voor DEZELFDE afgeronde 15m kaars
             if last_alerted_candles.get(symbol) == last_closed_candle_time:
+                print(f"[{symbol}] Reeds geanalyseerd voor deze 15m candle.", flush=True)
                 continue
 
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
             
             # Vang ALLE 3 de alert-types op: Pre-Trade Alert, Watchlist én GO!
             if analysis and ("PRE-TRADE ALERT" in analysis or "🚨 **GO**" in analysis or "WATCHLIST" in analysis or "GO / NO-GO VERDICT" in analysis):
-                print(f"[{now_str}] 🚨 ALERT GEGONGEN VOOR {symbol}!")
+                print(f"[{now_str}] 🚨 ALERT GEGENEREERD EN VERSTUURD VOOR {symbol}!", flush=True)
                 send_telegram_message(analysis)
                 last_alerted_candles[symbol] = last_closed_candle_time
             else:
-                print(f"[{now_str}] {symbol}: NO-GO / Geen valide S/R setup.")
+                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
             time.sleep(1) # Kleine pauze tussen API calls
         except Exception as e:
-            print(f"Error bij verwerken {symbol}: {e}")
+            print(f"Error bij verwerken {symbol}: {e}", flush=True)
 
 if __name__ == "__main__":
     startup_msg = (
@@ -293,7 +295,7 @@ if __name__ == "__main__":
         try:
             run_scanner()
         except Exception as e:
-            print(f"Loop error: {e}")
+            print(f"Loop error: {e}", flush=True)
         
         # 180 seconden (3 minuten) = 480 RPD (Veilig op Free Tier)
         time.sleep(180)
