@@ -11,14 +11,17 @@ import pytz
 import requests
 
 # ==========================================
-# 1. MINI FLASK WEBSERVER (Render 24/7 Keep-Alive)
+# 1. MINI FLASK WEBSERVER (Render Keep-Alive)
 # ==========================================
 app = Flask(__name__)
+
+# GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard: True)
+scalp_alerts_enabled = True
 
 
 @app.route('/')
 def health_check():
-    status = "AAN" if scalp_alerts_enabled else "UIT"
+    status = 'AAN' if scalp_alerts_enabled else 'UIT'
     return f'MyCryptoAgent Co-Pilot is Active! Scalp Alerts: {status}', 200
 
 
@@ -81,9 +84,6 @@ SYMBOLS = [
 last_alerted_candles = {}
 ny_open_alert_sent_today = False
 
-# GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard: True)
-scalp_alerts_enabled = True
-
 
 # ==========================================
 # 3. TELEGRAM COMMAND HANDLER (LIVE INTERACTIE)
@@ -95,36 +95,51 @@ def listen_telegram_commands():
         return
 
     last_update_id = 0
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates'
 
     while True:
         try:
-            params = {"timeout": 20, "offset": last_update_id + 1}
+            params = {'timeout': 20, 'offset': last_update_id + 1}
             response = requests.get(url, params=params, timeout=25)
             data = response.json()
 
-            if "result" in data:
-                for update in data["result"]:
-                    last_update_id = update["update_id"]
-                    message = update.get("message", {})
-                    text = message.get("text", "").strip()
+            if 'result' in data:
+                for update in data['result']:
+                    last_update_id = update['update_id']
+                    message = update.get('message', {})
+                    text = message.get('text', '').strip()
 
-                    if text == "/scalp_off":
+                    if text == '/scalp_off':
                         scalp_alerts_enabled = False
-                        send_telegram_message("🔴 **SCALP ALERTS UITGESCHAKELD**\n\nGemini API calls en meldingen voor Scalp Reclaim trades worden overgeslagen om tokens te besparen.")
-                        print("Telegram Command Executed: Scalp Alerts DISABLED", flush=True)
-                    
-                    elif text == "/scalp_on":
-                        scalp_alerts_enabled = True
-                        send_telegram_message("🟢 **SCALP ALERTS GEACTIVERD**\n\nScalp Reclaim analyses via Vertex AI zijn weer actief.")
-                        print("Telegram Command Executed: Scalp Alerts ENABLED", flush=True)
+                        send_telegram_message(
+                            '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nM1 data-fetches, M3'
+                            ' scalp-pivots en AI-calls voor Scalp Reclaims zijn gepauzeerd.'
+                        )
+                        print(
+                            'Telegram Command Executed: Scalp Alerts DISABLED', flush=True
+                        )
 
-                    elif text == "/status":
-                        status_str = "🟢 ACTIEF" if scalp_alerts_enabled else "🔴 UITGESCHAKELD"
-                        send_telegram_message(f"🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Alerts: {status_str}\n• High-Freq Engine: ACTIVE (60s loop)")
+                    elif text == '/scalp_on':
+                        scalp_alerts_enabled = True
+                        send_telegram_message(
+                            '🟢 **SCALP ALERTS GEACTIVERD**\n\nHigh-frequency M1 micro-data'
+                            ' en M3 scalp analyses via Vertex AI zijn weer actief.'
+                        )
+                        print(
+                            'Telegram Command Executed: Scalp Alerts ENABLED', flush=True
+                        )
+
+                    elif text == '/status':
+                        status_str = (
+                            '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD'
+                        )
+                        send_telegram_message(
+                            '🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode:'
+                            f' {status_str}\n• High-Freq Engine: ACTIVE (60s loop)'
+                        )
 
         except Exception as e:
-            print(f"Telegram listener error: {e}", flush=True)
+            print(f'Telegram listener error: {e}', flush=True)
             time.sleep(5)
 
 
@@ -166,7 +181,9 @@ def fetch_binance_klines(symbol, interval, limit=60):
         return []
 
 
-def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
+def find_key_levels(
+    candles_1d, candles_4h, candles_1h, candles_3m=None, include_scalp=True
+):
     levels = []
     seen_prices = set()
 
@@ -260,7 +277,8 @@ def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
                 'MEDIUM Intraday',
             )
 
-    if candles_3m and len(candles_3m) >= 5:
+    # ENKEL M3 MICRO SCALP PIVOTS BEREKENEN ALS SCALP ALERTS ACTIEF ZIJN (/scalp_on)
+    if include_scalp and candles_3m and len(candles_3m) >= 5:
         for i in range(2, len(candles_3m) - 2):
             if (
                 candles_3m[i]['high'] > candles_3m[i - 1]['high']
@@ -363,6 +381,7 @@ def evaluate_market_with_gemini(
     candles_15m,
     candles_5m,
     candles_3m,
+    candles_1m,  # M1 Micro Data
     btc_context,
     calculated_levels,
 ):
@@ -370,9 +389,6 @@ def evaluate_market_with_gemini(
         print('Vertex AI client is niet geïnitialiseerd.', flush=True)
         return None
 
-    last_closed_15m = (
-        candles_15m[-2] if len(candles_15m) >= 2 else candles_15m[-1]
-    )
     current_live_candle = candles_15m[-1]
     curr_price = current_live_candle['close']
 
@@ -381,90 +397,97 @@ def evaluate_market_with_gemini(
 
     min_sl_pct = 0.25 if symbol in ['BTCUSDT', 'ETHUSDT'] else 0.40
 
+    m1_prompt_block = (
+        f"- M1 Candles (Ultra-Micro Structuur & Volume Spikes - Laatste 20): {json.dumps(candles_1m[-20:])}\n"
+        if candles_1m
+        else "- M1 Candles: NIET ACTIEF (Scalp Mode is UIT)\n"
+    )
+
     prompt = (
-        "Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto (" + str(symbol) + ").\n"
-        "Analyseer de live data volgens de System Instructions. BEREKEN EXPLICIT DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.\n\n"
-        "CONTEXT BTCUSDT: Price = $" + str(btc_context['close']) + ", 15m Trend = " + str(btc_context['trend']) + "\n"
-        "HARD KEY LEVELS VOOR " + str(symbol) + ": " + json.dumps(calculated_levels) + "\n\n"
-        "VERPLICHTE BEREKENDE HARD TP1 TARGETS:\n"
-        "- Als LONG trade: TP1 IS VERPLICHT MATEMATISCH $ " + str(nearest_long_tp) + "\n"
-        "- Als SHORT trade: TP1 IS VERPLICHT MATEMATISCH $ " + str(nearest_short_tp) + "\n\n"
-        "TARGET ASSET UITGEBREIDE DIEPE HISTORIE DATA (" + str(symbol) + "):\n"
-        "- 1D Candles (Laatste 10): " + json.dumps(candles_1d[-10:]) + "\n"
-        "- 4H Candles (Laatste 15): " + json.dumps(candles_4h[-15:]) + "\n"
-        "- 1H Candles (Laatste 20): " + json.dumps(candles_1h[-20:]) + "\n"
-        "- 15m Candles (Laatste 20): " + json.dumps(candles_15m[-20:]) + "\n"
-        "- M5 Candles (Laatste 20): " + json.dumps(candles_5m[-20:]) + "\n"
-        "- M3 Candles (Micro Reversal & Volume - Laatste 20): " + json.dumps(candles_3m[-20:]) + "\n\n"
-        "ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:\n"
-        "- BTC ANKER LOGICA: BTCUSDT bepaalt de algemene markt-richting. Als BTC op S/R stuit en afketst, worden altcoins meegesleurd.\n"
-        "- RELATIVE WEAKNESS BONUS: Als dit een altcoin is (" + str(symbol) + " != BTCUSDT) en BTC geeft een Short-rejection, maar " + str(symbol) + " heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.\n"
-        "- ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als ALPHA TRADE SELECTION.\n\n"
-        "PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:\n"
-        "1. ALS PLAYBOOK = [SCALP RECLAIM] (M3/M5 Micro Reclaim):\n"
-        "   - Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal " + str(min_sl_pct) + "%).\n"
-        "   - TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!\n"
-        "   - R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.\n"
-        "2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):\n"
-        "   - Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.\n"
-        "   - TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.\n"
-        "   - R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.\n"
-        "3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):\n"
-        "   - Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.\n"
-        "   - TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.\n"
-        "   - R:R Target: TP1 MOET minimaal >= 2.0R bieden.\n\n"
-        "STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):\n"
-        "1. Risico 1R = |Entry - StopLoss|.\n"
-        "2. Beloning naar TP1 = |TP1 - Entry|.\n"
-        "3. R:R naar TP1 = Beloning / 1R.\n"
-        "4. Als R:R naar TP1 voor Optie A of B < 1.20R IS HET VERDICT AUTOMATISCH 'NO-GO'!\n"
-        "5. MINIMUM SL AFSTAND: De afstand tussen Entry en SL MOET minimaal " + str(min_sl_pct) + "% bedragen op deze asset (" + str(symbol) + ").\n"
-        "6. Formule EV_adj = T * ((P * R_gewogen) - ((1 - P) * 1R)). Reken dit MATHEMATISCH EXACT UIT zonder hallucinaties!\n"
-        "7. GEEN BLINDE LIMIT ORDERS: Optie D mag alleen gekozen worden als er al een M3/M5 reversal candle IS AFGEROND!\n\n"
-        "KWANTITATIEVE SCORING MATRIX:\n"
-        "1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)\n"
-        "Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)\n\n"
-        "3-TRAPS VERDICT REGELS:\n"
-        "1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.\n"
-        "2. WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.\n"
-        "3. GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.\n"
-        "4. NO-GO: Score < 65%, onvoldoende R:R (<1.2R) naar TP1, of SL < " + str(min_sl_pct) + "%.\n\n"
-        "OUTPUT FORMAT BIJ 'NO-GO':\n"
-        "**GO / NO-GO VERDICT:** **[NO-GO]** *(Rating: B | Score: X% | EV_adj: -X.XX R)*\n"
-        "Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar TP1, de SL te krap is (<" + str(min_sl_pct) + "%), of de M5 reversal ontbreekt).\n\n"
-        "OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':\n"
-        "**PRE-TRADE ALERT (KLAARZITTEN)** - " + str(symbol) + "\n"
-        "- **Afstand tot S/R Level:** ~X.XX% (Actuele koers: $" + str(current_live_candle['close']) + " vs Key Level: $XX.XX)\n"
-        "- **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)\n"
-        "- **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]\n"
-        "- **Verwachte Richting:** [Long / Short]\n"
-        "- **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.\n\n"
-        "OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':\n"
-        "**GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*\n\n"
-        "**ALPHA TRADE ANALYSIS (" + str(symbol) + "):**\n"
-        "- **BTC Context:** BTC Price = $" + str(btc_context['close']) + " (" + str(btc_context['trend']) + ")\n"
-        "- **Relative Strength/Weakness:** [Beschrijf of " + str(symbol) + " zwakker/sterker is dan BTC en waarom dit extra EV geeft].\n\n"
-        "**EXECUTION SUMMARY (" + str(symbol) + " - [Long / Short]):**\n"
-        "- **Playbook Type & Profile:** [Swing Breakout | Day Sweep | Scalp Reclaim]\n"
-        "- **Huidige Prijs:** $" + str(current_live_candle['close']) + "\n"
-        "- **Aanbevolen Strategy:** **Option B (Sweet Spot)**\n"
-        "- **Entry Price:** **$XX.XX**\n"
-        "- **Stop Loss (SL):** **$XX.XX** *(Structurele M3/M5 wick SL)*\n"
-        "- **TP1 Level:** **$XX.XX** *(Scale-out: 70% Scalp | 50% Day Sweep | 30% Swing)*\n"
-        "- **TP2 Level:** **$XX.XX**\n"
-        "- **Runner:** **$XX.XX**\n"
-        "- **Max Adjusted EV (EV_adj):** **+X.XX R**\n\n"
-        "### Execution Optimization Matrix\n"
-        "| Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | Option D (Retest Reversal - MAX EV_adj) |\n"
-        "| :--- | :--- | :--- | :--- | :--- |\n"
-        "| Entry Price | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
-        "| Stop Loss (SL) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
-        "| Risico Afstand (1R) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
-        "| TP1 Level | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
-        "| Fill Chance (T) | 85% | 65% | 40% | 85% |\n"
-        "| Gewogen R:R | X.XX R | X.XX R | X.XX R | X.XX R |\n"
-        "| Adjusted EV (EV_adj) | +X.XX R | +X.XX R | +X.XX R | +X.XX R (MAX) |\n\n"
-        "**Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength/Weakness Bonus)."
+        f"Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto ({symbol}).\n"
+        f"Analyseer de live data volgens de System Instructions. BEREKEN EXPLICIET DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.\n\n"
+        f"CONTEXT BTCUSDT: Price = ${btc_context['close']}, 15m Trend = {btc_context['trend']}\n"
+        f"HARD KEY LEVELS VOOR {symbol}: {json.dumps(calculated_levels)}\n\n"
+        f"VERPLICHTE BEREKENDE HARD TP1 TARGETS:\n"
+        f"- Als LONG trade: TP1 IS VERPLICHT MATEMATISCH $ {nearest_long_tp}\n"
+        f"- Als SHORT trade: TP1 IS VERPLICHT MATEMATISCH $ {nearest_short_tp}\n\n"
+        f"TARGET ASSET UITGEBREIDE DIEPE HISTORIE DATA ({symbol}):\n"
+        f"- 1D Candles (Laatste 10): {json.dumps(candles_1d[-10:])}\n"
+        f"- 4H Candles (Laatste 15): {json.dumps(candles_4h[-15:])}\n"
+        f"- 1H Candles (Laatste 20): {json.dumps(candles_1h[-20:])}\n"
+        f"- 15m Candles (Laatste 20): {json.dumps(candles_15m[-20:])}\n"
+        f"- M5 Candles (Laatste 20): {json.dumps(candles_5m[-20:])}\n"
+        f"- M3 Candles (Micro Reversal & Volume - Laatste 20): {json.dumps(candles_3m[-20:])}\n"
+        f"{m1_prompt_block}\n"
+        f"ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:\n"
+        f"- BTC ANKER LOGICA: BTCUSDT bepaalt de algemene markt-richting. Als BTC op S/R stuit en afketst, worden altcoins meegesleurd.\n"
+        f"- RELATIVE WEAKNESS BONUS: Als dit een altcoin is ({symbol} != BTCUSDT) en BTC geeft een Short-rejection, maar {symbol} heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.\n"
+        f"- ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als ALPHA TRADE SELECTION.\n\n"
+        f"PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:\n"
+        f"1. ALS PLAYBOOK = [SCALP RECLAIM] (M3/M5 Micro Reclaim):\n"
+        f"   - Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal {min_sl_pct}%).\n"
+        f"   - TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!\n"
+        f"   - R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.\n"
+        f"2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):\n"
+        f"   - Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.\n"
+        f"   - TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.\n"
+        f"   - R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.\n"
+        f"3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):\n"
+        f"   - Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.\n"
+        f"   - TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.\n"
+        f"   - R:R Target: TP1 MOET minimaal >= 2.0R bieden.\n\n"
+        f"STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):\n"
+        f"1. Risico 1R = |Entry - StopLoss|.\n"
+        f"2. Beloning naar TP1 = |TP1 - Entry|.\n"
+        f"3. R:R naar TP1 = Beloning / 1R.\n"
+        f"4. Als R:R naar TP1 voor Optie A of B < 1.20R IS HET VERDICT AUTOMATISCH 'NO-GO'!\n"
+        f"5. MINIMUM SL AFSTAND: De afstand tussen Entry en SL MOET minimaal {min_sl_pct}% bedragen op deze asset ({symbol}).\n"
+        f"6. Formule EV_adj = T * ((P * R_gewogen) - ((1 - P) * 1R)). Reken dit MATHEMATISCH EXACT UIT zonder hallucinaties!\n"
+        f"7. GEEN BLINDE LIMIT ORDERS: Optie D mag alleen gekozen worden als er al een M3/M5 reversal candle IS AFGEROND!\n\n"
+        f"KWANTITATIEVE SCORING MATRIX:\n"
+        f"1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)\n"
+        f"Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)\n\n"
+        f"3-TRAPS VERDICT REGELS:\n"
+        f"1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.\n"
+        f"2. WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.\n"
+        f"3. GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.\n"
+        f"4. NO-GO: Score < 65%, onvoldoende R:R (<1.2R) naar TP1, of SL < {min_sl_pct}%.\n\n"
+        f"OUTPUT FORMAT BIJ 'NO-GO':\n"
+        f"**GO / NO-GO VERDICT:** **[NO-GO]** *(Rating: B | Score: X% | EV_adj: -X.XX R)*\n"
+        f"Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar TP1, de SL te krap is (<{min_sl_pct}%), of de M5 reversal ontbreekt).\n\n"
+        f"OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':\n"
+        f"**PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}\n"
+        f"- **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level:$XX.XX)\n"
+        f"- **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)\n"
+        f"- **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]\n"
+        f"- **Verwachte Richting:** [Long / Short]\n"
+        f"- **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.\n\n"
+        f"OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':\n"
+        f"**GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*\n\n"
+        f"**ALPHA TRADE ANALYSIS ({symbol}):**\n"
+        f"- **BTC Context:** BTC Price = ${btc_context['close']} ({btc_context['trend']})\n"
+        f"- **Relative Strength/Weakness:** [Beschrijf of {symbol} zwakker/sterker is dan BTC en waarom dit extra EV geeft].\n\n"
+        f"**EXECUTION SUMMARY ({symbol} - [Long / Short]):**\n"
+        f"- **Playbook Type & Profile:** [Swing Breakout | Day Sweep | Scalp Reclaim]\n"
+        f"- **Huidige Prijs:** ${current_live_candle['close']}\n"
+        f"- **Aanbevolen Strategy:** **Option B (Sweet Spot)**\n"
+        f"- **Entry Price:** **$XX.XX**\n"
+        f"- **Stop Loss (SL):** **$XX.XX** *(Structurele M3/M5 wick SL)*\n"
+        f"- **TP1 Level:** **$XX.XX** *(Scale-out: 70% Scalp | 50% Day Sweep | 30% Swing)*\n"
+        f"- **TP2 Level:** **$XX.XX**\n"
+        f"- **Runner:** **$XX.XX**\n"
+        f"- **Max Adjusted EV (EV_adj):** **+X.XX R**\n\n"
+        f"### Execution Optimization Matrix\n"
+        f"| Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | Option D (Retest Reversal - MAX EV_adj) |\n"
+        f"| :--- | :--- | :--- | :--- | :--- |\n"
+        f"| Entry Price | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
+        f"| Stop Loss (SL) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
+        f"| Risico Afstand (1R) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
+        f"| TP1 Level | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |\n"
+        f"| Fill Chance (T) | 85% | 65% | 40% | 85% |\n"
+        f"| Gewogen R:R | X.XX R | X.XX R | X.XX R | X.XX R |\n"
+        f"| Adjusted EV (EV_adj) | +X.XX R | +X.XX R | +X.XX R | +X.XX R (MAX) |\n\n"
+        f"**Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength/Weakness Bonus)."
     )
 
     models_to_try = [
@@ -529,6 +552,13 @@ def run_scanner():
             candles_5m = fetch_binance_klines(symbol, '5m', limit=35)
             candles_3m = fetch_binance_klines(symbol, '3m', limit=35)
 
+            # DYNAMISCH M1 KLINES OPHALEN ENKEL ALS /scalp_on IS
+            candles_1m = (
+                fetch_binance_klines(symbol, '1m', limit=30)
+                if scalp_alerts_enabled
+                else []
+            )
+
             if (
                 not candles_1d
                 or not candles_4h
@@ -539,8 +569,13 @@ def run_scanner():
             ):
                 continue
 
+            # DYNAMISCH SCALP LEVELS BEREKENEN ENKEL ALS /scalp_on IS
             calculated_levels = find_key_levels(
-                candles_1d, candles_4h, candles_1h, candles_3m
+                candles_1d,
+                candles_4h,
+                candles_1h,
+                candles_3m,
+                include_scalp=scalp_alerts_enabled,
             )
 
             curr_close = candles_15m[-1]['close']
@@ -564,11 +599,15 @@ def run_scanner():
                 time.sleep(0.2)
                 continue
 
-            # 🛡️ PYTHON SCALP FILTER (BESPAART API TOKENS ALS SCALPS UIT STAAN)
-            is_scalp_level = matched_level and ('M3 Micro' in matched_level['name'] or matched_level.get('importance') == 'LOW Scalp')
+            # 🛡️ PYTHON SCALP FILTER (BESPAART API TOKENS & SKIPS M3 LEVELS ALS /scalp_off IS)
+            is_scalp_level = matched_level and (
+                'M3 Micro' in matched_level['name']
+                or matched_level.get('importance') == 'LOW Scalp'
+            )
             if not scalp_alerts_enabled and is_scalp_level:
                 print(
-                    f'[{now_str}] [{symbol}] SKIPPED -> Scalp level gedetecteerd, maar Scalp Alerts staan UIT (/scalp_off). API Call bespaard!',
+                    f'[{now_str}] [{symbol}] SKIPPED -> Scalp level gedetecteerd, maar'
+                    ' Scalp Alerts staan UIT (/scalp_off). API Call bespaard!',
                     flush=True,
                 )
                 time.sleep(0.2)
@@ -604,6 +643,7 @@ def run_scanner():
                 candles_15m,
                 candles_5m,
                 candles_3m,
+                candles_1m,  # Enkel gevuld als /scalp_on
                 btc_context,
                 calculated_levels,
             )
@@ -654,9 +694,12 @@ if __name__ == '__main__':
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van 1D/4H/1H Key Level\n'
         '2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n'
-        '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n'
-        '• **Interactive Scalp Toggle:** Gebruik `/scalp_off` en `/scalp_on` in Telegram om Scalp AI-calls live te pauzeren en tokens te besparen.\n'
-        '• **System Status Check:** Stuur `/status` in Telegram voor live schakelaar-status.'
+        '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >='
+        ' 65%\n\n'
+        '• **Interactive Scalp Toggle:** Gebruik `/scalp_off` en `/scalp_on` in'
+        ' Telegram om M1 micro-data fetches en Scalp AI-calls live te pauzeren.\n'
+        '• **System Status Check:** Stuur `/status` in Telegram voor live'
+        ' schakelaar-status.'
     )
     send_telegram_message(startup_msg)
 
