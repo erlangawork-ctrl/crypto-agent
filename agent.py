@@ -211,7 +211,6 @@ def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
                 'MEDIUM Intraday',
             )
 
-    # Optioneel: M3 Pivots voor Micro Intraday Levels
     if candles_3m and len(candles_3m) >= 5:
         for i in range(2, len(candles_3m) - 2):
             if (
@@ -359,6 +358,20 @@ def evaluate_market_with_gemini(
     - RELATIVE WEAKNESS BONUS: Als dit een altcoin is ({symbol} != BTCUSDT) en BTC geeft een Short-rejection, maar {symbol} heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.
     - ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als '🔥 ALPHA TRADE SELECTION'.
 
+    🎯 PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:
+    1. ALS PLAYBOOK = [SCALP RECLAIM] (M3/M5 Micro Reclaim):
+       • Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal {min_sl_pct}%).
+       • TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!
+       • R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.
+    2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):
+       • Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.
+       • TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.
+       • R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.
+    3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):
+       • Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.
+       • TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.
+       • R:R Target: TP1 MOET minimaal >= 2.0R bieden.
+
     STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):
     1. Risico 1R = |Entry - StopLoss|.
     2. Beloning naar TP1 = |TP1 - Entry|.
@@ -398,11 +411,14 @@ def evaluate_market_with_gemini(
     • **Relative Strength/Weakness:** [Beschrijf of {symbol} zwakker/sterker is dan BTC en waarom dit extra EV geeft].
 
     🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
+    • **Playbook Type & Profile:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     • **Huidige Prijs:** ${current_live_candle['close']}
     • **Aanbevolen Strategy:** **Option B (Sweet Spot)**
     • **Entry Price:** **$XX.XX**
     • **Stop Loss (SL):** **$XX.XX** *(Structurele M3/M5 wick SL)*
-    • **TP1 Level:** **$XX.XX**
+    • **TP1 Level:** **$XX.XX** *(Scale-out: 70% Scalp | 50% Day Sweep | 30% Swing)*
+    • **TP2 Level:** **$XX.XX**
+    • **Runner:** **$XX.XX**
     • **Max Adjusted EV (EV_adj):** **+X.XX R**
 
     ### Execution Optimization Matrix
@@ -411,7 +427,7 @@ def evaluate_market_with_gemini(
     | **Entry Price** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Risico Afstand (1R)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **TP1 (50%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **TP1 Level** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
     | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
     | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
     | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
@@ -593,14 +609,16 @@ def run_scanner():
 
 if __name__ == '__main__':
     startup_msg = (
-        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (OPTIMIZED + ALPHA'
-        ' TRADE)!**\n\n'
+        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (FULL SYSTEM'
+        ' INSTRUCTIONS)!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van 1D/4H/1H Key Level\n'
         '2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n'
         '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n'
-        '• **Alpha Trade Selection:** Kiest automatisch de asset met de hoogste'
-        ' Relative Weakness/EV_adj wanneer BTC afketst.\n'
+        '• **Playbook Adaptive Execution:** Dynamische TP/SL regels per Scalp,'
+        ' Day Sweep en Swing.\n'
+        '• **Alpha Trade Selection:** Selecteert automatisch de beste Relative'
+        ' Weakness altcoin bij BTC rejections.\n'
         '• **High-Frequency Scan:** 60-seconden lus op Binance data met diepe M3-1D'
         ' context.'
     )
