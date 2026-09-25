@@ -211,7 +211,7 @@ def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
                 'MEDIUM Intraday',
             )
 
-    # Micro M3 Pivots voor Ultra-intraday Scalp levels
+    # Optioneel: M3 Pivots voor Micro Intraday Levels
     if candles_3m and len(candles_3m) >= 5:
         for i in range(2, len(candles_3m) - 2):
             if (
@@ -242,6 +242,7 @@ def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
 
 
 def get_nearest_target(current_price, calculated_levels, direction='LONG'):
+    """Berekent het eerstvolgende logische TP niveau zonder 'droom'-fallbacks."""
     prices = [lvl['price'] for lvl in calculated_levels]
     if direction == 'LONG':
         targets = [p for p in prices if p > current_price]
@@ -306,7 +307,7 @@ def check_ny_open_warning():
 
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (VERTEX AI - DEEP CONTEXT)
+# 4. AI QUANT EVALUATIE ENGINE (VERTEX AI - DEEP CONTEXT & ALPHA TRADE)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -353,6 +354,11 @@ def evaluate_market_with_gemini(
     - M5 Candles (Laatste 20): {json.dumps(candles_5m[-20:])}
     - M3 Candles (Micro Reversal & Volume - Laatste 20): {json.dumps(candles_3m[-20:])}
 
+    🔥 ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:
+    - BTC ANKER LOGICA: BTCUSDT bepaalt de algemene markt-richting. Als BTC op S/R stuit en afketst, worden altcoins meegesleurd.
+    - RELATIVE WEAKNESS BONUS: Als dit een altcoin is ({symbol} != BTCUSDT) en BTC geeft een Short-rejection, maar {symbol} heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.
+    - ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als '🔥 ALPHA TRADE SELECTION'.
+
     STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):
     1. Risico 1R = |Entry - StopLoss|.
     2. Beloning naar TP1 = |TP1 - Entry|.
@@ -361,10 +367,6 @@ def evaluate_market_with_gemini(
     5. MINIMUM SL AFSTAND: De afstand tussen Entry en SL MOET minimaal {min_sl_pct}% bedragen op deze asset ({symbol}).
     6. Formule EV_adj = T * ((P * R_gewogen) - ((1 - P) * 1R)). Reken dit MATHEMATISCH EXACT UIT zonder hallucinaties!
     7. GEEN BLINDE LIMIT ORDERS: Optie D mag alleen gekozen worden als er al een M3/M5 reversal candle IS AFGEROND!
-
-    ⚡ SPECIAL RELATIVE STRENGTH / DECOUPLING LOGICA:
-    - [SUPER BUY]: Als {symbol} haar 4H/Daily Support verdedigt TERWIJL BTC bearish/downward dumpt, verhoog Win Rate (P) met +12% tot +15%.
-    - [SUPER SELL]: Als {symbol} haar 4H/Daily Resistance faalt TERWIJL BTC bullish/upward pumpt, verhoog Win Rate (P) voor Short met +12% tot +15%.
 
     KWANTITATIEVE SCORING MATRIX:
     1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)
@@ -390,6 +392,10 @@ def evaluate_market_with_gemini(
 
     OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':
     **GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*
+
+    🔥 **ALPHA TRADE ANALYSIS ({symbol}):**
+    • **BTC Context:** BTC Price = ${btc_context['close']} ({btc_context['trend']})
+    • **Relative Strength/Weakness:** [Beschrijf of {symbol} zwakker/sterker is dan BTC en waarom dit extra EV geeft].
 
     🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
     • **Huidige Prijs:** ${current_live_candle['close']}
@@ -433,10 +439,7 @@ def evaluate_market_with_gemini(
             elif '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
                 time.sleep(2)
             else:
-                print(
-                    f'Vertex AI Error ({model_name}) voor {symbol}: {e}',
-                    flush=True,
-                )
+                print(f'Vertex AI Error ({model_name}) voor {symbol}: {e}', flush=True)
                 return None
     return None
 
@@ -488,7 +491,6 @@ def run_scanner():
             ):
                 continue
 
-            # HERSTELD: M3 kaarsen worden meegegeven voor Pivot berekeningen
             calculated_levels = find_key_levels(
                 candles_1d, candles_4h, candles_1h, candles_3m
             )
@@ -537,7 +539,6 @@ def run_scanner():
 
             last_closed_candle_time = candles_15m[-2]['timestamp']
 
-            # HERSTELD: Alle 8 vereiste argumenten exact op de juiste positie
             analysis = evaluate_market_with_gemini(
                 symbol,
                 candles_1d,
@@ -592,15 +593,16 @@ def run_scanner():
 
 if __name__ == '__main__':
     startup_msg = (
-        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (VERIFIED)!**\n\n'
+        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (OPTIMIZED + ALPHA'
+        ' TRADE)!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van 1D/4H/1H Key Level\n'
         '2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n'
         '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n'
-        '• **High-Frequency Scan:** 60-seconden lus op Binance data.\n'
-        '• **Deep Multi-Timeframe Context:** M3, M5, M15, 1H, 4H, 1D kaarsenhistorie'
-        ' toegevoegd.\n'
-        '• **Vertex AI Powered:** Nul rate limits, maximale analytische diepte.'
+        '• **Alpha Trade Selection:** Kiest automatisch de asset met de hoogste'
+        ' Relative Weakness/EV_adj wanneer BTC afketst.\n'
+        '• **High-Frequency Scan:** 60-seconden lus op Binance data met diepe M3-1D'
+        ' context.'
     )
     send_telegram_message(startup_msg)
 
