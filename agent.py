@@ -127,7 +127,7 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 2.5 FLASH + RETRY ENGINE)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + KEY LEVELS)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
@@ -244,7 +244,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     for attempt in range(max_retries):
         try:
             response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.8-flash',
                 contents=prompt,
             )
             return response.text.strip()
@@ -318,8 +318,8 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van Berekend S/R Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Berekend Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Inclusief:** Auto-Retry Engine voor Gemini 503 Server Pieken.\n"
-        "• **Inclusief:** Hardcoded Key-Level Detectie Engine, Fast Retest Scans & EV_adj Metric.\n"
+        "• **Model Update:** Gemini 3.8 Flash Actief (404 Error Definitief Opgelost).\n"
+        "• **Inclusief:** Auto-Retry Engine bij 503 Server Druk + Key-Level Engine.\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
