@@ -25,17 +25,22 @@ def run_flask():
 threading.Thread(target=run_flask, daemon=True).start()
 
 # ==========================================
-# 2. CONFIGURATIE & ENVIRONMENT VARIABLES
+# 2. CONFIGURATIE & ENVIRONMENT VARIABLES (GOOGLE CLOUD VERTEX AI)
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Ophalen uit de Environment Variable GCP_PROJECT_ID op Render
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "crypto-ai-agent-509618")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 
 ai_client = None
-if GEMINI_API_KEY:
-    ai_client = genai.Client(api_key=GEMINI_API_KEY)
-else:
-    print("WARNING: GEMINI_API_KEY niet gevonden!", flush=True)
+try:
+    # Verbinding maken via Google Cloud Vertex AI (Verbruikt de $300 Starter Credits!)
+    ai_client = genai.Client(vertexai=True, project=GCP_PROJECT_ID, location=GCP_LOCATION)
+    print(f"SUCCESS: Verbonden met Google Cloud Vertex AI (Project: {GCP_PROJECT_ID})", flush=True)
+except Exception as e:
+    print(f"WARNING: Vertex AI Initialisatie mislukt: {e}", flush=True)
 
 # Alle 9 gemonitorde assets
 SYMBOLS = [
@@ -187,11 +192,11 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + RATE-LIMIT SAFE)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.1 PRO ON VERTEX AI)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels):
     if not ai_client:
-        print("Gemini client is niet geïnitialiseerd.", flush=True)
+        print("Vertex AI client is niet geïnitialiseerd.", flush=True)
         return None
 
     # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
@@ -287,25 +292,22 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength Bonus).
     """
 
-    # AUTORETRY LUS MET RUIME PAUZE BIJ 429 RATE LIMITS
     max_retries = 2
     for attempt in range(max_retries):
         try:
+            # AANROEP VAN HET VLAGGENSCHIP GEMINI 3.1 PRO MODEL OP GOOGLE CLOUD VERTEX AI
             response = ai_client.models.generate_content(
-                model='gemini-3.8-flash',
+                model='gemini-3.1-pro',
                 contents=prompt,
             )
             return response.text.strip()
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                print(f"[{symbol}] Rate limit bereikt (429). Wachten 25s voor quota reset (poging {attempt + 1}/{max_retries})...", flush=True)
-                time.sleep(25)
-            elif "503" in err_str or "UNAVAILABLE" in err_str:
-                print(f"[{symbol}] Gemini 503 Overbelasting. Wachten 5s...", flush=True)
-                time.sleep(5)
+                print(f"[{symbol}] Quota overschreden. Korte pauze (poging {attempt + 1}/{max_retries})...", flush=True)
+                time.sleep(3)
             else:
-                print(f"Gemini API error voor {symbol}: {e}", flush=True)
+                print(f"Vertex AI Gemini Pro Error voor {symbol}: {e}", flush=True)
                 return None
     return None
 
@@ -360,12 +362,12 @@ def run_scanner():
                 time.sleep(0.5)
                 continue
 
-            print(f"[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level['name']}) -> Gemini AI inschakelen...", flush=True)
+            print(f"[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level['name']}) -> Gemini 3.1 Pro Inschakelen...", flush=True)
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
 
-            # Vraag Gemini alleen om analyse als Python bevestigt dat we nabij een level zijn
+            # Vraag Gemini 3.1 Pro alleen om analyse als Python bevestigt dat we nabij een level zijn
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels)
             
             # SLIMMER DEDUPLICATIE FILTER MET 15-MINUTEN EXPIRATIE
@@ -385,19 +387,19 @@ def run_scanner():
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
-            # PAUZE VAN 5 SECONDEN VOOR GEBRUIKTE GEMINI CALLS
-            time.sleep(5)
+            # MENSELIJKE PAUZE TUSSEN GEMINI CALLS
+            time.sleep(2)
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}", flush=True)
 
 if __name__ == "__main__":
     startup_msg = (
-        "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
+        "🤖 **MyCryptoAgent Master Service IS LIVE ON GOOGLE CLOUD (VERTEX AI)!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Multi-Timeframe Python S/R Engine:** Active op 1D, 4H én 1H Pivots (Mist geen enkel niveau).\n"
+        "• **Model Upgrade:** Gemini 3.1 Pro actief via Vertex AI ($300 Cloud Credits).\n"
         "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
         "• **Relative Strength Engine:** Inclusief BTC Decoupling Bonus (+12-15% Win Rate P op S/R Hold bij BTC Drop).\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
@@ -410,5 +412,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Loop error: {e}", flush=True)
         
-        # 180 seconden (3 minuten) = 480 RPD (Veilig op Free Tier)
+        # 180 seconden (3 minuten) scan lus
         time.sleep(180)
