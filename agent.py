@@ -173,13 +173,16 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 # 5. MAIN SCANNER LOOP
 # ==========================================
 def run_scanner():
-    print("🔍 Markt-scan gestart voor alle 9 symbolen...")
+    tz = pytz.timezone('Europe/Amsterdam')
+    now_str = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{now_str}] 🔍 Markt-scan gestart voor alle 9 symbolen...")
     
     # Check 15:20 CET NY Open waarschuwing
     check_ny_open_warning()
 
     btc_15m = fetch_binance_klines("BTCUSDT", "15m", limit=10)
     if not btc_15m:
+        print("Geen BTC data ontvangen, scan overgeslagen.")
         return
 
     btc_context = {
@@ -206,8 +209,11 @@ def run_scanner():
             
             # Vang nu ALLE 3 de alert-types op: Pre-Trade, Watchlist én GO!
             if analysis and ("⚠️ **PRE-TRADE ALERT**" in analysis or "🚨 **GO**" in analysis or "🚨 **WATCHLIST**" in analysis):
+                print(f"[{now_str}] 🚨 ALERT GEGONGEN VOOR {symbol}!")
                 send_telegram_message(analysis)
                 last_alerted_candles[symbol] = last_candle_time
+            else:
+                print(f"[{now_str}] {symbol}: NO-GO / Geen valide S/R setup.")
 
             time.sleep(2)
         except Exception as e:
