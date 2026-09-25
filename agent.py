@@ -400,24 +400,24 @@ def evaluate_market_with_gemini(
     - M5 Candles (Laatste 20): {json.dumps(candles_5m[-20:])}
     - M3 Candles (Micro Reversal & Volume - Laatste 20): {json.dumps(candles_3m[-20:])}
 
-    🔥 ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:
+    ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:
     - BTC ANKER LOGICA: BTCUSDT bepaalt de algemene markt-richting. Als BTC op S/R stuit en afketst, worden altcoins meegesleurd.
     - RELATIVE WEAKNESS BONUS: Als dit een altcoin is ({symbol} != BTCUSDT) en BTC geeft een Short-rejection, maar {symbol} heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.
-    - ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als '🔥 ALPHA TRADE SELECTION'.
+    - ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als ALPHA TRADE SELECTION.
 
-    🎯 PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:
+    PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:
     1. ALS PLAYBOOK = [SCALP RECLAIM] (M3/M5 Micro Reclaim):
-       • Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal {min_sl_pct}%).
-       • TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!
-       • R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.
+       - Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal {min_sl_pct}%).
+       - TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!
+       - R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.
     2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):
-       • Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.
-       • TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.
-       • R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.
+       - Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.
+       - TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.
+       - R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.
     3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):
-       • Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.
-       • TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.
-       • R:R Target: TP1 MOET minimaal >= 2.0R bieden.
+       - Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.
+       - TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.
+       - R:R Target: TP1 MOET minimaal >= 2.0R bieden.
 
     STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):
     1. Risico 1R = |Entry - StopLoss|.
@@ -433,9 +433,9 @@ def evaluate_market_with_gemini(
     Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)
 
     3-TRAPS VERDICT REGELS:
-    1. ⚠️ PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.
-    2. 👁️ WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.
-    3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.
+    1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.
+    2. WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.
+    3. GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.
     4. NO-GO: Score < 65%, onvoldoende R:R (<1.2R) naar TP1, of SL < {min_sl_pct}%.
 
     OUTPUT FORMAT BIJ 'NO-GO':
@@ -443,41 +443,41 @@ def evaluate_market_with_gemini(
     Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar TP1, de SL te krap is (<{min_sl_pct}%), of de M5 reversal ontbreekt).
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
-    ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
-    • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level:$XX.XX)
-    • **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)
-    • **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
-    • **Verwachte Richting:** [Long / Short]
-    • **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
+    **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
+    - **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level:$XX.XX)
+    - **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)
+    - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
+    - **Verwachte Richting:** [Long / Short]
+    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
 
     OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':
     **GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*
 
-    🔥 **ALPHA TRADE ANALYSIS ({symbol}):**
-    • **BTC Context:** BTC Price = ${btc_context['close']} ({btc_context['trend']})
-    • **Relative Strength/Weakness:** [Beschrijf of {symbol} zwakker/sterker is dan BTC en waarom dit extra EV geeft].
+    **ALPHA TRADE ANALYSIS ({symbol}):**
+    - **BTC Context:** BTC Price = ${btc_context['close']} ({btc_context['trend']})
+    - **Relative Strength/Weakness:** [Beschrijf of {symbol} zwakker/sterker is dan BTC en waarom dit extra EV geeft].
 
-    🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
-    • **Playbook Type & Profile:** [Swing Breakout | Day Sweep | Scalp Reclaim]
-    • **Huidige Prijs:** ${current_live_candle['close']}
-    • **Aanbevolen Strategy:** **Option B (Sweet Spot)**
-    • **Entry Price:** **$XX.XX**
-    • **Stop Loss (SL):** **$XX.XX** *(Structurele M3/M5 wick SL)*
-    • **TP1 Level:** **$XX.XX** *(Scale-out: 70% Scalp | 50% Day Sweep | 30% Swing)*
-    • **TP2 Level:** **$XX.XX**
-    • **Runner:** **$XX.XX**
-    • **Max Adjusted EV (EV_adj):** **+X.XX R**
+    **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
+    - **Playbook Type & Profile:** [Swing Breakout | Day Sweep | Scalp Reclaim]
+    - **Huidige Prijs:** ${current_live_candle['close']}
+    - **Aanbevolen Strategy:** **Option B (Sweet Spot)**
+    - **Entry Price:** **$XX.XX**
+    - **Stop Loss (SL):** **$XX.XX** *(Structurele M3/M5 wick SL)*
+    - **TP1 Level:** **$XX.XX** *(Scale-out: 70% Scalp | 50% Day Sweep | 30% Swing)*
+    - **TP2 Level:** **$XX.XX**
+    - **Runner:** **$XX.XX**
+    - **Max Adjusted EV (EV_adj):** **+X.XX R**
 
     ### Execution Optimization Matrix
-    | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | **Option D (Retest Reversal - MAX EV_adj)** |
+    | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | Option D (Retest Reversal - MAX EV_adj) |
     | :--- | :--- | :--- | :--- | :--- |
-    | Entry Price | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | Stop Loss (SL) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | Risico Afstand (1R) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | TP1 Level | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
-    | Fill Chance (T) | 85% | 65% | 40% | **85%** |
-    | Gewogen R:R | X.XX R | X.XX R | X.XX R | **X.XX R** |
-    | Adjusted EV (EV_adj) | +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
+    | Entry Price | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |
+    | Stop Loss (SL) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |
+    | Risico Afstand (1R) | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |
+    | TP1 Level | $XX.XX \vert{}$XX.XX | $XX.XX \vert{}$XX.XX |
+    | Fill Chance (T) | 85% | 65% | 40% | 85% |
+    | Gewogen R:R | X.XX R | X.XX R | X.XX R | X.XX R |
+    | Adjusted EV (EV_adj) | +X.XX R | +X.XX R | +X.XX R | +X.XX R (MAX) |
 
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau, BTC-correlatie en eventuele Relative Strength/Weakness Bonus).
     """
