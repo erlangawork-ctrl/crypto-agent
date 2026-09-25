@@ -84,25 +84,33 @@ def fetch_binance_klines(symbol, interval, limit=50):
         return []
 
 def find_key_levels(candles_1d, candles_4h):
-    """Berekent automatisch de belangrijkste S/R levels uit 1D en 4H Klines."""
+    """Berekent automatisch de belangrijkste S/R levels uit 1D (Daily Macro) en 4H Klines."""
     levels = []
     
-    # 1D PDH / PDL
+    # 1D PDH / PDL (Previous Day High / Low)
     if len(candles_1d) >= 2:
-        levels.append({"name": "PDH (Previous Day High)", "price": candles_1d[-2]["high"]})
-        levels.append({"name": "PDL (Previous Day Low)", "price": candles_1d[-2]["low"]})
+        levels.append({"name": "1D PDH (Previous Day High)", "price": candles_1d[-2]["high"], "importance": "CRITICAL HTF"})
+        levels.append({"name": "1D PDL (Previous Day Low)", "price": candles_1d[-2]["low"], "importance": "CRITICAL HTF"})
         
-    # 4H Swing Highs & Lows (Pivots)
+    # 1D Daily Swing Highs & Lows (Pivots over 10 dagen)
+    for i in range(2, len(candles_1d) - 2):
+        if candles_1d[i]["high"] > candles_1d[i-1]["high"] and candles_1d[i]["high"] > candles_1d[i-2]["high"] and \
+           candles_1d[i]["high"] > candles_1d[i+1]["high"] and candles_1d[i]["high"] > candles_1d[i+2]["high"]:
+            levels.append({"name": f"1D Daily Major Resistance (${candles_1d[i]['high']})", "price": candles_1d[i]["high"], "importance": "CRITICAL HTF"})
+            
+        if candles_1d[i]["low"] < candles_1d[i-1]["low"] and candles_1d[i]["low"] < candles_1d[i-2]["low"] and \
+           candles_1d[i]["low"] < candles_1d[i+1]["low"] and candles_1d[i]["low"] < candles_1d[i+2]["low"]:
+            levels.append({"name": f"1D Daily Major Support (${candles_1d[i]['low']})", "price": candles_1d[i]["low"], "importance": "CRITICAL HTF"})
+
+    # 4H Swing Highs & Lows
     for i in range(2, len(candles_4h) - 2):
-        # Swing High
         if candles_4h[i]["high"] > candles_4h[i-1]["high"] and candles_4h[i]["high"] > candles_4h[i-2]["high"] and \
            candles_4h[i]["high"] > candles_4h[i+1]["high"] and candles_4h[i]["high"] > candles_4h[i+2]["high"]:
-            levels.append({"name": f"4H Swing High (${candles_4h[i]['high']})", "price": candles_4h[i]["high"]})
+            levels.append({"name": f"4H Swing High (${candles_4h[i]['high']})", "price": candles_4h[i]["high"], "importance": "HIGH HTF"})
             
-        # Swing Low
         if candles_4h[i]["low"] < candles_4h[i-1]["low"] and candles_4h[i]["low"] < candles_4h[i-2]["low"] and \
            candles_4h[i]["low"] < candles_4h[i+1]["low"] and candles_4h[i]["low"] < candles_4h[i+2]["low"]:
-            levels.append({"name": f"4H Swing Low (${candles_4h[i]['low']})", "price": candles_4h[i]["low"]})
+            levels.append({"name": f"4H Swing Low (${candles_4h[i]['low']})", "price": candles_4h[i]["low"], "importance": "HIGH HTF"})
             
     return levels
 
@@ -127,14 +135,14 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + KEY LEVELS)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + 1D HTF LEVELS)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
         print("Gemini client is niet geïnitialiseerd.", flush=True)
         return None
 
-    # Automatische wiskundige level-detectie
+    # Automatische wiskundige level-detectie (Inclusief 1D Daily Swings)
     calculated_levels = find_key_levels(candles_1d, candles_4h)
 
     # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
@@ -149,11 +157,11 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - BTC Laatste Price: ${btc_context['close']}
     - BTC 15m Trend: {btc_context['trend']}
 
-    BEREKENDE HARD S/R KEY LEVELS VOOR {symbol} (GEBRUIK DEZE EXPLICIET VOOR NIVEAU-DETECTIE):
+    BEREKENDE HARD S/R KEY LEVELS VOOR {symbol} (INCLUSIEF 1D DAILY MACRO LEVELS):
     {json.dumps(calculated_levels, indent=2)}
 
     TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
-    - Laatste 3x 1D Candles: {json.dumps(candles_1d[-3:])}
+    - Laatste 5x 1D Candles: {json.dumps(candles_1d[-5:])}
     - Laatste 5x 4H Candles (HTF Trend & Major S/R): {json.dumps(candles_4h[-5:])}
     - LAATST AFGERONDE 15m Candle (VOOR FULL BODY CLOSE CHECK): {json.dumps(last_closed_15m)}
     - LOPENDE 15m Candle (ACTUELE PRIJS & HIGH/LOW WICKS): {json.dumps(current_live_candle)}
@@ -161,7 +169,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 
     KWANTITATIEVE SCORING MATRIX (4 FACTOREN):
     1. Trend Alignment (35%): 3/3 Aligned = 100%, 2/3 = 66.7%, 1/3 = 33.3%
-    2. Level Kwaliteit (30%): HTF Major (PDH/PDL/4H S/R uit berekende lijst) = 100%, 1H/15m Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
+    2. Level Kwaliteit (30%): 1D Daily HTF Level / PDH / PDL = 100% (CRITICAL), 4H Swing = 80%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
     3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
     4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
 
@@ -174,7 +182,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
 
     3-TRAPS VERDICT REGELS:
-    1. ⚠️ PRE-TRADE ALERT: De actuele prijs OF de high/low van de lopende candle is binnen <= 1.0% van een BEREKEND KEY LEVEL, maar er is nog GEEN afgeronde 15m close over level of M3/M5 reversal. Doel: Klaarzitten op M3/M5!
+    1. ⚠️ PRE-TRADE ALERT: De actuele prijs OF de high/low van de lopende candle is binnen <= 1.0% van een BEREKEND KEY LEVEL (1D of 4H), maar er is nog GEEN afgeronde 15m close over level of M3/M5 reversal. Doel: Klaarzitten op M3/M5!
     2. 👁️ WATCHLIST: 15m Full Body Close is GEVALIDEERD op/over een KEY LEVEL (wick <= 30%), maar M3/M5 reversal is nog in aanbouw.
     3. 🚨 GO: 15m Full Body Close GEVALIDEERD (of actieve uitbraak) EN op M3/M5 staat een BEVESTIGDE Reversal Pinbar/Engulfing op de retest van een KEY LEVEL EN Score >= 65% EN EV_adj > +0.30R.
     4. NO-GO: Score < 65% (B-Rating) of geen KEY LEVELS nabij (>1.0% afstand).
@@ -185,7 +193,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     - **Afstand tot S/R Level:** ~X.XX%
-    - **Verwachte S/R Zone:** $XX.XX (PDH / PDL / 4H Level)
+    - **Verwachte S/R Zone:** $XX.XX (1D Daily Level / PDH / PDL / 4H Swing)
     - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     - **Verwachte Richting:** [Long / Short]
     - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
@@ -223,7 +231,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     | **Playbook Type** | [Swing Breakout | Day Sweep | Scalp Reclaim] | - | - |
     | **Asset & Richting** | {symbol} - [Long / Short] | - | - |
     | **Trend Alignment** | [3/3 Aligned | 2/3 Aligned | 1/3 Counter] | 35% | X / 100% |
-    | **Sweep/Level Kwaliteit**| [HTF Major | 1H/15m Swing | Minor Level] | 30% | X / 100% |
+    | **Sweep/Level Kwaliteit**| [1D Daily HTF | 4H Swing Level | Minor Level] | 30% | X / 100% |
     | **Displacement & Micro** | [15m Close + M3/M5 Reversal | Normale Close | Zwakke Reclaim] | 20% | X / 100% |
     | **Timing** | [London/NY Open | Daily Close | Mid Session / US Open Window] | 15% | X / 100% |
 
@@ -280,7 +288,7 @@ def run_scanner():
 
     for symbol in SYMBOLS:
         try:
-            candles_1d = fetch_binance_klines(symbol, "1d", limit=10)
+            candles_1d = fetch_binance_klines(symbol, "1d", limit=15)
             candles_4h = fetch_binance_klines(symbol, "4h", limit=20)
             candles_15m = fetch_binance_klines(symbol, "15m", limit=20)
             candles_5m = fetch_binance_klines(symbol, "5m", limit=20)
@@ -315,11 +323,11 @@ if __name__ == "__main__":
     startup_msg = (
         "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
-        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van Berekend S/R Level (Klaarzitten)\n"
-        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Berekend Level\n"
+        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
+        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Model Update:** Gemini 3.8 Flash Actief (404 Error Definitief Opgelost).\n"
-        "• **Inclusief:** Auto-Retry Engine bij 503 Server Druk + Key-Level Engine.\n"
+        "• **1D Daily Macro Levels:** Geautomatiseerde 1D Swing Point & PDH/PDL Detectie Engine.\n"
+        "• **Inclusief:** Auto-Retry bij 503 Druk, Gemini 3.8 Flash, Fast Retest Scans & EV_adj Metric.\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
