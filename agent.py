@@ -104,7 +104,7 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (3-TRAPS PROTOCOL)
+# 4. AI QUANT EVALUATIE ENGINE (INCLUSIEF EV_adj & TIGHT SL)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
@@ -121,48 +121,96 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 
     prompt = f"""
     Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto ({symbol}).
-    Analyseer de live data volgens de strikte system instructions en het 3-traps waarschuwingsprotocol.
+    Analyseer de live data volgens de exacte System Instructions. BEREKEN EXPLICIT DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.
 
     CONTEXT BTCUSDT (Voor Trend Alignment & Altcoin Correlatie):
-    - BTC Laatste Price: {btc_context['close']}
+    - BTC Laatste Price: ${btc_context['close']}
     - BTC 15m Trend: {btc_context['trend']}
 
     TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
-    - Daily (1D) Macro S/R & Levels: PDH (Previous Day High) = ${pdh}, PDL (Previous Day Low) = ${pdl}
+    - Daily (1D) Macro S/R & Levels: PDH = ${pdh}, PDL = ${pdl}
     - Laatste 3x 1D Candles: {json.dumps(candles_1d[-3:])}
     - Laatste 5x 4H Candles (HTF Trend & Major S/R): {json.dumps(candles_4h[-5:])}
     - LAATST AFGERONDE 15m Candle (VOOR FULL BODY CLOSE CHECK): {json.dumps(last_closed_15m)}
     - LOPENDE 15m Candle (ACTUELE PRIJS): {json.dumps(current_live_candle)}
     - Laatste 5x 5m Candles (M3/M5 Micro Reversal & Volume): {json.dumps(candles_5m[-5:])}
 
-    STRIKTE EVALUATIE REGELS VOOR VERDICT CATEGORIE:
-    1. ⚠️ PRE-TRADE ALERT: De actuele prijs nadert een belangrijk HTF S/R niveau (PDH/PDL, Daily, 4H Swing) tot op <= 0.5%, MAAR er is op de LAATST AFGERONDE 15m candle nog GEEN 15m close over het level of M3/M5 reversal. Doel = Waarschuwen dat de trader KLAAR MOET ZITTEN op M3/M5.
-    2. 👁️ WATCHLIST: De LAATST AFGERONDE 15m candle ({json.dumps(last_closed_15m)}) heeft een geldige Full Body Close (wick <= 30% van kaarsbereik) over/op het S/R level, MAAR de M3/M5 reversal candle op de retest moet nog vormen/bevestigen.
-    3. 🚨 GO: LAATST AFGERONDE 15m close is geldig EN op M3/M5 staat een BEVESTIGDE reversal (Engulfing op volume >=1.5x / Pinbar >=66% / M1-M3 MSS) EN Setup Score >= 65% EN EV > +0.30R.
-    4. NO-GO: Geen niveaus nabij (>0.5% afstand), of B-setup (<65% score / wick > 30% op afgeronde 15m kaars / slechte trend alignment).
+    KWANTITATIEVE SCORING MATRIX (4 FACTOREN):
+    1. Trend Alignment (35%): 3/3 Aligned = 100%, 2/3 = 66.7%, 1/3 = 33.3%
+    2. Level Kwaliteit (30%): HTF Major (PDH/PDL/4H S/R) = 100%, 1H/15m Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
+    3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
+    4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
 
-    REGELS VOOR TIMING & NY OPEN:
-    - Tussen 15:15 en 16:30 CET/CEST mag ER GEEN FRONT-RUN LIMIT worden geadviseerd op S/R randen. We eisen dat de eerste liquidity sweep is geweest.
+    FORMULES FOR MATHEMATISCHE TOETSING:
+    - Setup Score (%) = (Trend * 0.35) + (Level * 0.30) + (Displacement * 0.20) + (Timing * 0.15)
+    - Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)
+    - Win Rate P: A+ = 70%, A = 58%, B = 40%
+    - Gewogen R:R (Scale-Out 50/30/20) = (0.50 * R_TP1) + (0.30 * R_TP2) + (0.20 * R_Runner)
+    - EV = (P * R_gewogen) - ((1 - P) * 1R)
+    - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
+
+    3-TRAPS VERDICT REGELS:
+    1. ⚠️ PRE-TRADE ALERT: Prijs binnen <= 0.5% van HTF S/R (PDH/PDL/4H Level), maar nog GEEN afgeronde 15m close of M3/M5 reversal. Doel: Klaarzitten!
+    2. 👁️ WATCHLIST: 15m Full Body Close is GEVALIDEERD (wick <= 30%), maar M3/M5 reversal is nog in aanbouw.
+    3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R.
+    4. NO-GO: Score < 65% (B-Rating) of geen S/R niveaus nabij.
+
+    STRUCTUUR VOOR OPTIE C (AGGRESSIVE / TIGHT SL):
+    In Option C van de matrix zet je de Stop Loss NIET op de 4H Swing Low, maar STRIKT onder de lokale M3/M5 retest-wick (lokale bodem). Dit maakt 1R zeer klein en laat R:R, EV en EV_adj expliciet zien!
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     - **Afstand tot S/R Level:** ~X.XX%
-    - **Verwachte S/R Zone:** $XX.XX (Bijv. PDH / Daily Level / 4H Swing)
+    - **Verwachte S/R Zone:** $XX.XX (PDH / PDL / 4H Level)
     - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     - **Verwachte Richting:** [Long / Short]
-    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal pattern op de retest.
+    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
 
     OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':
-    🚨 **[GO | WATCHLIST]** - {symbol}
-    **Rating:** [A+ | A | B] | **Score:** X% | **EV:** +X.XX R
+    **GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | EV_adj: +X.XX R)*
 
-    - **Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
-    - **Richting:** [Long / Short]
-    - **Entry (Confirmed Reversal / Deep Placement):** $XX.XX
-    - **Stop Loss:** $XX.XX
-    - **TP1 (50%):** $XX.XX | **TP2 (30%):** $XX.XX | **Runner (20%):** $XX.XX
-    - **Gewogen R:R:** X.XX R | **Fill Chance (T):** X%
-    - **Adjusted EV (EV_adj):** +X.XX R
+    ### Trade Details
+    * **Playbook Type:** [Swing Breakout | Day Sweep | Scalp Reclaim]
+    * **Asset & Richting:** {symbol} - [Long / Short]
+    * **Niveaus (Sweet Spot Execution na M3/M5 Reversal / Deep Entry):**
+      * Entry (Confirmed Reversal / Deep Placement): $XX.XX
+      * SL (Structurele SL / Low): $XX.XX
+      * TP1 (50%): $XX.XX
+      * TP2 (30%): $XX.XX
+      * Runner (20%): $XX.XX (Trailing Stop)
+
+    #### Execution Optimization Matrix
+    | Parameter | Conservative (Option A) | Optimal / Sweet Spot (Option B - Recommended) | Aggressive (Option C - Tight SL) |
+    | :--- | :--- | :--- | :--- |
+    | **Entry Price** | $XX.XX | **$XX.XX** | $XX.XX |
+    | **Stop Loss (SL)** | $XX.XX | **$XX.XX** | $XX.XX (Tight Retest Wick SL) |
+    | **Risico Afstand (1R)** | $XX.XX | **$XX.XX** | $XX.XX |
+    | **TP1 (50%)** | $XX.XX | **$XX.XX** | $XX.XX |
+    | **TP2 (30%)** | $XX.XX | **$XX.XX** | $XX.XX |
+    | **Runner (20%)** | $XX.XX | **$XX.XX** | $XX.XX |
+    | **Fill Chance (T)** | X% | **X%** | X% |
+    | **Gewogen R:R** | X.XX R | **X.XX R** | X.XX R |
+    | **Expected Value (EV)**| +X.XX R | **+X.XX R** | +X.XX R |
+    | **Adjusted EV (EV_adj)**| **+X.XX R** | **+X.XX R (LEIDEND)** | **+X.XX R** |
+
+    ### Metrics Invoer (voor de Sheet)
+    | Metric Category | Geselecteerde Waarde | Factor Gewicht | Behaalde Score |
+    | :--- | :--- | :--- | :--- |
+    | **Playbook Type** | [Swing Breakout | Day Sweep | Scalp Reclaim] | - | - |
+    | **Asset & Richting** | {symbol} - [Long / Short] | - | - |
+    | **Trend Alignment** | [3/3 Aligned | 2/3 Aligned | 1/3 Counter] | 35% | X / 100% |
+    | **Sweep/Level Kwaliteit**| [HTF Major | 1H/15m Swing | Minor Level] | 30% | X / 100% |
+    | **Displacement & Micro** | [15m Close + M3/M5 Reversal | Normale Close | Zwakke Reclaim] | 20% | X / 100% |
+    | **Timing** | [London/NY Open | Daily Close | Mid Session / US Open Window] | 15% | X / 100% |
+
+    ### Statistische Toetsing
+    * **Setup Score (%):** X%
+    * **Setup Rating:** [A+ | A]
+    * **Win Rate (P):** X%
+    * **Order Fill Chance (T):** X%
+    * **Beoogde R:R (Gewogen):** X.XX R
+    * **Expected Value (EV):** +X.XX R
+    * **Adjusted Expected Value (EV_adj):** **+X.XX R (LEIDEND)**
 
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
@@ -211,14 +259,14 @@ def run_scanner():
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
             
-            # Voorkom dubbele meldingen gestuurd voor DEZELFDE afgeronde 15m kaars
+            # Voorkom dat er dubbele meldingen gestuurd worden voor DEZELFDE afgeronde 15m kaars
             if last_alerted_candles.get(symbol) == last_closed_candle_time:
                 continue
 
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
             
             # Vang ALLE 3 de alert-types op: Pre-Trade Alert, Watchlist én GO!
-            if analysis and ("PRE-TRADE ALERT" in analysis or "🚨 **GO**" in analysis or "WATCHLIST" in analysis):
+            if analysis and ("PRE-TRADE ALERT" in analysis or "🚨 **GO**" in analysis or "WATCHLIST" in analysis or "GO / NO-GO VERDICT" in analysis):
                 print(f"[{now_str}] 🚨 ALERT GEGONGEN VOOR {symbol}!")
                 send_telegram_message(analysis)
                 last_alerted_candles[symbol] = last_closed_candle_time
@@ -232,12 +280,11 @@ def run_scanner():
 if __name__ == "__main__":
     startup_msg = (
         "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
-        "**Geïntegreerd 3-Traps Alert Systeem:**\n"
+        "**Geïntegreerd Quantitative System Instructions:**\n"
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 0.5% van S/R (Klaarzitten)\n"
-        "2. 👁️ **Watchlist:** Laatst afgeronde 15m Full Body Close bevestigd\n"
-        "3. 🚨 **GO Execution:** M3/M5 Reversal + EV > +0.30R\n\n"
-        "• **Multi-Timeframe Precision:** 1D Daily Macro S/R + 4H HTF Trend + 15m/5m Execution\n"
-        "• **Timing:** Inclusief 15:20 CET NY Open Alert & US Open Rules\n"
+        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) bevestigd\n"
+        "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
+        "• **Inclusief:** EV_adj als LEIDENDE METRIC, Option C Tight SL Matrix, US Open Rule & 4-Factor Scoring.\n"
         "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
@@ -248,6 +295,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Loop error: {e}")
         
-        # 180 seconden (3 minuten) = 480 RPD.
-        # Voorkomt 429 ResourceExhausted op Gemini Free Tier & mist geen M15 closes of M3/M5 retests!
+        # 180 seconden (3 minuten) = 480 RPD (Veilig op Free Tier)
         time.sleep(180)
