@@ -135,14 +135,14 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + 1D HTF LEVELS)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + FRONT-RUN & OPTION D MATRIX)
 # ==========================================
 def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
     if not ai_client:
         print("Gemini client is niet geïnitialiseerd.", flush=True)
         return None
 
-    # Automatische wiskundige level-detectie (Inclusief 1D Daily Swings)
+    # Automatische wiskundige level-detectie
     calculated_levels = find_key_levels(candles_1d, candles_4h)
 
     # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
@@ -181,68 +181,54 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - EV = (P * R_gewogen) - ((1 - P) * 1R)
     - EV_adj = T * EV (waarbij T = Fill Chance %). ONTHOUD: EV_adj IS DE ABSOLUUT LEIDENDE METRIC!
 
-    3-TRAPS VERDICT REGELS:
-    1. ⚠️ PRE-TRADE ALERT: De actuele prijs OF de high/low van de lopende candle is binnen <= 1.0% van een BEREKEND KEY LEVEL (1D of 4H), maar er is nog GEEN afgeronde 15m close over level of M3/M5 reversal. Doel: Klaarzitten op M3/M5!
-    2. 👁️ WATCHLIST: 15m Full Body Close is GEVALIDEERD op/over een KEY LEVEL (wick <= 30%), maar M3/M5 reversal is nog in aanbouw.
-    3. 🚨 GO: 15m Full Body Close GEVALIDEERD (of actieve uitbraak) EN op M3/M5 staat een BEVESTIGDE Reversal Pinbar/Engulfing op de retest van een KEY LEVEL EN Score >= 65% EN EV_adj > +0.30R.
-    4. NO-GO: Score < 65% (B-Rating) of geen KEY LEVELS nabij (>1.0% afstand).
+    EXECUTION OPTIONS DEFINITIE:
+    - Option A (Conservative): Markt/Bovenkant zone entry, ruime structurele SL. High T (85%), lagere R:R.
+    - Option B (Sweet Spot): Exacte S/R retest entry, structurele SL. Medium T (65%), gebalanceerde R:R.
+    - Option C (Aggressive): Exacte S/R retest entry, hele strakke M3/M5 retest wick SL. Lagere T (40%), hoge R:R.
+    - Option D (Front-Run + Aggressive SL - MAX EV_adj): Front-run entry (0.15% - 0.25% boven/onder retest level) gecombineerd met de strakke M3/M5 retest wick SL. Dit geeft een hoge Fill Chance T (~85%) én hele strakke 1R, wat resulteert in de MAXIMAAL MOGELIJKE EV_adj!
 
-    STRUCTUUR VOOR OPTIE C (AGGRESSIVE / TIGHT SL):
-    In Option C van de matrix zet je de Stop Loss STRIKT onder de lokale M3/M5 retest-wick (lokale bodem). Dit maakt 1R zeer klein en laat R:R, EV en EV_adj expliciet zien!
+    3-TRAPS VERDICT REGELS:
+    1. ⚠️ PRE-TRADE ALERT: Prijs/wick binnen <= 1.0% van KEY LEVEL, maar geen 15m close/reversal.
+    2. 👁️ WATCHLIST: 15m Full Body Close GEVALIDEERD (wick <= 30%), maar M3/M5 reversal nog in aanbouw.
+    3. 🚨 GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R.
+    4. NO-GO: Score < 65% (B-Rating) of geen KEY LEVELS nabij.
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
-    - **Afstand tot S/R Level:** ~X.XX%
-    - **Verwachte S/R Zone:** $XX.XX (1D Daily Level / PDH / PDL / 4H Swing)
-    - **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
-    - **Verwachte Richting:** [Long / Short]
-    - **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
+    • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level: $XX.XX)
+    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D Daily Level / PDH / PDL / 4H Swing)
+    • **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
+    • **Verwachte Richting:** [Long / Short]
+    • **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
 
     OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':
-    **GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | EV_adj: +X.XX R)*
+    **GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*
 
-    ### Trade Details
-    * **Playbook Type:** [Swing Breakout | Day Sweep | Scalp Reclaim]
-    * **Asset & Richting:** {symbol} - [Long / Short]
-    * **Niveaus (Sweet Spot Execution na M3/M5 Reversal / Deep Entry):**
-      * Entry (Confirmed Reversal / Deep Placement): $XX.XX
-      * SL (Structurele SL / Low): $XX.XX
-      * TP1 (50%): $XX.XX
-      * TP2 (30%): $XX.XX
-      * Runner (20%): $XX.XX (Trailing Stop)
+    🎯 **EXECUTION SUMMARY ({symbol} - [Long / Short]):**
+    • **Huidige Prijs:** ${current_live_candle['close']}
+    • **Aanbevolen Strategy:** **Option D (Front-Run + Aggressive SL)**
+    • **Front-Run Entry:** **$XX.XX** *(0.20% boven retest level voor maximale vulkans)*
+    • **Aggressive SL:** **$XX.XX** *(Strak onder lokale M3/M5 wick)*
+    • **Max Adjusted EV (EV_adj):** **+X.XX R** *(Leidende Beslis-Metric)*
 
-    #### Execution Optimization Matrix
-    | Parameter | Conservative (Option A) | Optimal / Sweet Spot (Option B - Recommended) | Aggressive (Option C - Tight SL) |
-    | :--- | :--- | :--- | :--- |
-    | **Entry Price** | $XX.XX | **$XX.XX** | $XX.XX |
-    | **Stop Loss (SL)** | $XX.XX | **$XX.XX** | $XX.XX (Tight Retest Wick SL) |
-    | **Risico Afstand (1R)** | $XX.XX | **$XX.XX** | $XX.XX |
-    | **TP1 (50%)** | $XX.XX | **$XX.XX** | $XX.XX |
-    | **TP2 (30%)** | $XX.XX | **$XX.XX** | $XX.XX |
-    | **Runner (20%)** | $XX.XX | **$XX.XX** | $XX.XX |
-    | **Fill Chance (T)** | X% | **X%** | X% |
-    | **Gewogen R:R** | X.XX R | **X.XX R** | X.XX R |
-    | **Expected Value (EV)**| +X.XX R | **+X.XX R** | +X.XX R |
-    | **Adjusted EV (EV_adj)**| **+X.XX R** | **+X.XX R (LEIDEND)** | **+X.XX R** |
+    ### Execution Optimization Matrix
+    | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | **Option D (Front-Run + Aggr. SL - MAX EV_adj)** |
+    | :--- | :--- | :--- | :--- | :--- |
+    | **Entry Price** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX (Tight SL) | **$XX.XX (Tight SL)** |
+    | **Risico Afstand (1R)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **TP1 (50%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **TP2 (30%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **Runner (20%)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
+    | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
+    | **Expected Value (EV)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R** |
+    | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
 
-    ### Metrics Invoer (voor de Sheet)
-    | Metric Category | Geselecteerde Waarde | Factor Gewicht | Behaalde Score |
-    | :--- | :--- | :--- | :--- |
-    | **Playbook Type** | [Swing Breakout | Day Sweep | Scalp Reclaim] | - | - |
-    | **Asset & Richting** | {symbol} - [Long / Short] | - | - |
-    | **Trend Alignment** | [3/3 Aligned | 2/3 Aligned | 1/3 Counter] | 35% | X / 100% |
-    | **Sweep/Level Kwaliteit**| [1D Daily HTF | 4H Swing Level | Minor Level] | 30% | X / 100% |
-    | **Displacement & Micro** | [15m Close + M3/M5 Reversal | Normale Close | Zwakke Reclaim] | 20% | X / 100% |
-    | **Timing** | [London/NY Open | Daily Close | Mid Session / US Open Window] | 15% | X / 100% |
-
-    ### Statistische Toetsing
-    * **Setup Score (%):** X%
-    * **Setup Rating:** [A+ | A]
-    * **Win Rate (P):** X%
-    * **Order Fill Chance (T):** X%
-    * **Beoogde R:R (Gewogen):** X.XX R
-    * **Expected Value (EV):** +X.XX R
-    * **Adjusted Expected Value (EV_adj):** **+X.XX R (LEIDEND)**
+    ### Metrics & Statistische Toetsing
+    • **Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim] | **Setup Score:** X% ([A+ | A])
+    • **Trend (35%):** X/100% | **Level (30%):** X/100% | **Displacement (20%):** X/100% | **Timing (15%):** X/100%
+    • **Win Rate (P):** X% | **Max EV_adj:** **+X.XX R**
 
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
@@ -251,6 +237,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            # GEBRUIK HET JUISTE GEMINI-3.8-FLASH MODEL OMDAT 2.5 AANGEEFT 404 NOT_FOUND TE ZIJN
             response = ai_client.models.generate_content(
                 model='gemini-3.8-flash',
                 contents=prompt,
@@ -326,9 +313,9 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **1D Daily Macro Levels:** Geautomatiseerde 1D Swing Point & PDH/PDL Detectie Engine.\n"
-        "• **Inclusief:** Auto-Retry bij 503 Druk, Gemini 3.8 Flash, Fast Retest Scans & EV_adj Metric.\n"
-        "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - 100% Safe op Gemini Free Tier)"
+        "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj.\n"
+        "• **Model Update:** Gemini 3.8 Flash Actief (404 Error Definitief Opgelost).\n"
+        "• **API Optimisatie:** 3-Minuten Scan Lus (480 RPD - Safe op Gemini Free Tier)"
     )
     send_telegram_message(startup_msg)
 
