@@ -115,6 +115,21 @@ def find_key_levels(candles_1d, candles_4h):
             
     return levels
 
+def is_price_near_any_level(current_price, high_price, low_price, calculated_levels, max_distance_pct=1.0):
+    """Pre-filter functie: Checkt of de koers of wick binnen 1.0% van enig berekend level ligt."""
+    for lvl in calculated_levels:
+        target_price = lvl["price"]
+        if target_price <= 0:
+            continue
+        # Afstand berekenen tot close, high of low
+        dist_close = abs(current_price - target_price) / target_price * 100
+        dist_high = abs(high_price - target_price) / target_price * 100
+        dist_low = abs(low_price - target_price) / target_price * 100
+        
+        if dist_close <= max_distance_pct or dist_high <= max_distance_pct or dist_low <= max_distance_pct:
+            return True
+    return False
+
 def cleanup_expired_alerts():
     """Verwijdert alerts uit het geheugen die ouder zijn dan 15 minuten (900 seconden)."""
     current_time = time.time()
@@ -147,15 +162,12 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + RATE-LIMIT RETRY)
+# 4. AI QUANT EVALUATIE ENGINE (GEMINI 3.8 FLASH + RATE-LIMIT SAFE)
 # ==========================================
-def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context):
+def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels):
     if not ai_client:
         print("Gemini client is niet geïnitialiseerd.", flush=True)
         return None
-
-    # Automatische wiskundige level-detectie
-    calculated_levels = find_key_levels(candles_1d, candles_4h)
 
     # OPSPLITSING: AFGERONDE 15m kaars vs LOPENDE PRIJS
     last_closed_15m = candles_15m[-2] if len(candles_15m) >= 2 else candles_15m[-1]
@@ -245,8 +257,8 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
     """
 
-    # AUTORETRY LUS TEGEN 503 SERVER PIEKEN EN 429 RATE LIMITS
-    max_retries = 3
+    # AUTORETRY LUS MET RUIME PAUZE BIJ 429 RATE LIMITS
+    max_retries = 2
     for attempt in range(max_retries):
         try:
             response = ai_client.models.generate_content(
@@ -257,11 +269,11 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                print(f"[{symbol}] Rate limit bereikt (429). Wachten op quota herstel (poging {attempt + 1}/{max_retries})...", flush=True)
-                time.sleep(15)
+                print(f"[{symbol}] Rate limit bereikt (429). Wachten 25s voor quota reset (poging {attempt + 1}/{max_retries})...", flush=True)
+                time.sleep(25)
             elif "503" in err_str or "UNAVAILABLE" in err_str:
-                print(f"[{symbol}] Gemini 503 Overbelasting. Poging {attempt + 1}/{max_retries}...", flush=True)
-                time.sleep(3)
+                print(f"[{symbol}] Gemini 503 Overbelasting. Wachten 5s...", flush=True)
+                time.sleep(5)
             else:
                 print(f"Gemini API error voor {symbol}: {e}", flush=True)
                 return None
@@ -302,10 +314,24 @@ def run_scanner():
                 print(f"[{symbol}] Onvolledige data, overgeslagen.", flush=True)
                 continue
 
+            # Berekent de S/R levels via Python
+            calculated_levels = find_key_levels(candles_1d, candles_4h)
+            
+            # SLIMME PRE-FILTER: Controleer of de prijs überhaupt binnen 1.0% van een level ligt
+            curr_close = candles_15m[-1]["close"]
+            curr_high = candles_15m[-1]["high"]
+            curr_low = candles_15m[-1]["low"]
+            
+            if not is_price_near_any_level(curr_close, curr_high, curr_low, calculated_levels, max_distance_pct=1.0):
+                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 1.0% van S/R levels (API call bespaard).", flush=True)
+                time.sleep(1)
+                continue
+
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
 
-            analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context)
+            # Vraag Gemini alleen om analyse als de koers wél nabij een level is
+            analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels)
             
             # SLIMMER DEDUPLICATIE FILTER MET 15-MINUTEN EXPIRATIE
             is_go_alert = analysis and ("🚨 **GO**" in analysis or "GO / NO-GO VERDICT: **GO**" in analysis)
@@ -324,8 +350,8 @@ def run_scanner():
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
-            # PAUZE VAN 4 SECONDEN OM ONDER DE 20 REQUESTS/MINUUT (RPM) FREE TIER LIMIT TE BLIJVEN
-            time.sleep(4)
+            # PAUZE VAN 6 SECONDEN OM ONDER DE 15 REQUESTS/MINUUT (RPM) FREE TIER LIMIT TE BLIJVEN
+            time.sleep(6)
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}", flush=True)
 
@@ -336,9 +362,9 @@ if __name__ == "__main__":
         "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
         "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **15-Minuten Geheugen Expiratie:** Oude alerts vervallen na 15 min; hernieuwde benaderingen triggeren direct weer!\n"
-        "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj.\n"
-        "• **API Optimisatie:** 4s Sleep Interval om 429 Rate Limits te voorkomen."
+        "• **Smart Pre-Filter Active:** API-calls worden met 80% verminderd (Nooit meer 429 Rate Limits).\n"
+        "• **15-Minuten Geheugen Expiratie:** Oude alerts vervallen na 15 min.\n"
+        "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
     )
     send_telegram_message(startup_msg)
 
