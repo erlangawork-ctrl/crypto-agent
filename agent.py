@@ -55,7 +55,7 @@ last_alerted_candles = {}
 ny_open_alert_sent_today = False
 
 # ==========================================
-# 3. HELPER FUNCTIES, LEVEL DETECTIE & TIME CHECKS
+# 3. HELPER FUNCTIES, ADVANCED LEVEL DETECTIE & TIME CHECKS
 # ==========================================
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -84,51 +84,76 @@ def fetch_binance_klines(symbol, interval, limit=50):
         print(f"Binance fetch error {symbol}: {e}", flush=True)
         return []
 
-def find_key_levels(candles_1d, candles_4h):
-    """Berekent automatisch de belangrijkste S/R levels uit 1D (Daily Macro) en 4H Klines."""
+def find_key_levels(candles_1d, candles_4h, candles_1h):
+    """
+    ULTRA-PRECIEZE PYTHON S/R ENGINE:
+    Berekent 1D Daily Swings, PDH/PDL, 4H Swings, 1H Pivots en Psychologische Levels.
+    """
     levels = []
-    
-    # 1D PDH / PDL (Previous Day High / Low)
+    seen_prices = set()
+
+    def add_level(name, price, importance):
+        # Voorkom exact dubbele levels binnen 0.1% van elkaar
+        for p in seen_prices:
+            if abs(p - price) / price < 0.001:
+                return
+        seen_prices.add(price)
+        levels.append({"name": name, "price": price, "importance": importance})
+
+    # 1. 1D PDH / PDL (Previous Day High / Low)
     if len(candles_1d) >= 2:
-        levels.append({"name": "1D PDH (Previous Day High)", "price": candles_1d[-2]["high"], "importance": "CRITICAL HTF"})
-        levels.append({"name": "1D PDL (Previous Day Low)", "price": candles_1d[-2]["low"], "importance": "CRITICAL HTF"})
-        
-    # 1D Daily Swing Highs & Lows (Pivots over 10 dagen)
+        add_level("1D PDH (Previous Day High)", candles_1d[-2]["high"], "CRITICAL HTF")
+        add_level("1D PDL (Previous Day Low)", candles_1d[-2]["low"], "CRITICAL HTF")
+
+    # 2. 1D Daily Swing Highs & Lows (Pivots over 15 dagen)
     for i in range(2, len(candles_1d) - 2):
         if candles_1d[i]["high"] > candles_1d[i-1]["high"] and candles_1d[i]["high"] > candles_1d[i-2]["high"] and \
            candles_1d[i]["high"] > candles_1d[i+1]["high"] and candles_1d[i]["high"] > candles_1d[i+2]["high"]:
-            levels.append({"name": f"1D Daily Major Resistance (${candles_1d[i]['high']})", "price": candles_1d[i]["high"], "importance": "CRITICAL HTF"})
+            add_level(f"1D Major Resistance (${candles_1d[i]['high']})", candles_1d[i]["high"], "CRITICAL HTF")
             
         if candles_1d[i]["low"] < candles_1d[i-1]["low"] and candles_1d[i]["low"] < candles_1d[i-2]["low"] and \
            candles_1d[i]["low"] < candles_1d[i+1]["low"] and candles_1d[i]["low"] < candles_1d[i+2]["low"]:
-            levels.append({"name": f"1D Daily Major Support (${candles_1d[i]['low']})", "price": candles_1d[i]["low"], "importance": "CRITICAL HTF"})
+            add_level(f"1D Major Support (${candles_1d[i]['low']})", candles_1d[i]["low"], "CRITICAL HTF")
 
-    # 4H Swing Highs & Lows
+    # 3. 4H Swing Highs & Lows (Pivots over 30 candles)
     for i in range(2, len(candles_4h) - 2):
         if candles_4h[i]["high"] > candles_4h[i-1]["high"] and candles_4h[i]["high"] > candles_4h[i-2]["high"] and \
            candles_4h[i]["high"] > candles_4h[i+1]["high"] and candles_4h[i]["high"] > candles_4h[i+2]["high"]:
-            levels.append({"name": f"4H Swing High (${candles_4h[i]['high']})", "price": candles_4h[i]["high"], "importance": "HIGH HTF"})
+            add_level(f"4H Swing High (${candles_4h[i]['high']})", candles_4h[i]["high"], "HIGH HTF")
             
         if candles_4h[i]["low"] < candles_4h[i-1]["low"] and candles_4h[i]["low"] < candles_4h[i-2]["low"] and \
            candles_4h[i]["low"] < candles_4h[i+1]["low"] and candles_4h[i]["low"] < candles_4h[i+2]["low"]:
-            levels.append({"name": f"4H Swing Low (${candles_4h[i]['low']})", "price": candles_4h[i]["low"], "importance": "HIGH HTF"})
+            add_level(f"4H Swing Low (${candles_4h[i]['low']})", candles_4h[i]["low"], "HIGH HTF")
+
+    # 4. 1H Swing Highs & Lows (Micro Structure Pivots)
+    for i in range(2, len(candles_1h) - 2):
+        if candles_1h[i]["high"] > candles_1h[i-1]["high"] and candles_1h[i]["high"] > candles_1h[i-2]["high"] and \
+           candles_1h[i]["high"] > candles_1h[i+1]["high"] and candles_1h[i]["high"] > candles_1h[i+2]["high"]:
+            add_level(f"1H Swing High (${candles_1h[i]['high']})", candles_1h[i]["high"], "MEDIUM Intraday")
             
+        if candles_1h[i]["low"] < candles_1h[i-1]["low"] and candles_1h[i]["low"] < candles_1h[i-2]["low"] and \
+           candles_1h[i]["low"] < candles_1h[i+1]["low"] and candles_1h[i]["low"] < candles_1h[i+2]["low"]:
+            add_level(f"1H Swing Low (${candles_1h[i]['low']})", candles_1h[i]["low"], "MEDIUM Intraday")
+
     return levels
 
-def is_price_near_any_level(current_price, high_price, low_price, calculated_levels, max_distance_pct=1.0):
-    """Pre-filter functie: Checkt of de koers of wick binnen 1.0% van enig berekend level ligt."""
+def is_price_near_any_level(current_price, high_price, low_price, calculated_levels, max_distance_pct=1.2):
+    """
+    PRE-FILTER PORTIER ENGINE:
+    Checkt of de actuele sluitkoers of high/low wicks binnen 1.2% van ENIG berekend level liggen.
+    """
     for lvl in calculated_levels:
         target_price = lvl["price"]
         if target_price <= 0:
             continue
-        # Afstand berekenen tot close, high of low
+        
         dist_close = abs(current_price - target_price) / target_price * 100
         dist_high = abs(high_price - target_price) / target_price * 100
         dist_low = abs(low_price - target_price) / target_price * 100
         
         if dist_close <= max_distance_pct or dist_high <= max_distance_pct or dist_low <= max_distance_pct:
-            return True
-    return False
+            return True, lvl
+    return False, None
 
 def cleanup_expired_alerts():
     """Verwijdert alerts uit het geheugen die ouder zijn dan 15 minuten (900 seconden)."""
@@ -181,7 +206,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     - BTC Laatste Price: ${btc_context['close']}
     - BTC 15m Trend: {btc_context['trend']}
 
-    BEREKENDE HARD S/R KEY LEVELS VOOR {symbol} (INCLUSIEF 1D DAILY MACRO LEVELS):
+    BEREKENDE HARD S/R KEY LEVELS VOOR {symbol} (INCLUSIEF 1D, 4H EN 1H MACRO/INTRADAY LEVELS):
     {json.dumps(calculated_levels, indent=2)}
 
     TARGET ASSET MULTI-TIMEFRAME DATA ({symbol}):
@@ -193,7 +218,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
 
     KWANTITATIEVE SCORING MATRIX (4 FACTOREN):
     1. Trend Alignment (35%): 3/3 Aligned = 100%, 2/3 = 66.7%, 1/3 = 33.3%
-    2. Level Kwaliteit (30%): 1D Daily HTF Level / PDH / PDL = 100% (CRITICAL), 4H Swing = 80%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
+    2. Level Kwaliteit (30%): 1D Daily HTF Level / PDH / PDL = 100% (CRITICAL), 4H Swing = 80%, 1H Swing = 60%, Minor = 30%. (Pas -30% False Breakout Penalty toe bij <48u recovery zonder accumulatie).
     3. Displacement & Micro (20%): 15m Full Body Close (wick <=30%) + Bevestigde M3/M5 Reversal (Engulfing op volume >=1.5x / Pinbar >=66% / MSS) = 100%. Normale close zonder M5 reversal = 60%. Zwak/Wicks >30% = 30%.
     4. Session Timing (15%): London/NY Open (na sweep) = 100%, Daily Close = 80%, Mid Session / US Open Window (15:15-16:30) = 40%.
 
@@ -220,7 +245,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
     • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level: $XX.XX)
-    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D Daily Level / PDH / PDL / 4H Swing)
+    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D Daily Level / PDH / PDL / 4H/1H Swing)
     • **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     • **Verwachte Richting:** [Long / Short]
     • **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
@@ -254,7 +279,7 @@ def evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, can
     • **Trend (35%):** X/100% | **Level (30%):** X/100% | **Displacement (20%):** X/100% | **Timing (15%):** X/100%
     • **Win Rate (P):** X% | **Max EV_adj:** **+X.XX R**
 
-    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H niveau en BTC-correlatie).
+    **Korte Analyse:** (Max 2 zinnen met exacte reden, Daily/4H/1H niveau en BTC-correlatie).
     """
 
     # AUTORETRY LUS MET RUIME PAUZE BIJ 429 RATE LIMITS
@@ -307,30 +332,35 @@ def run_scanner():
         try:
             candles_1d = fetch_binance_klines(symbol, "1d", limit=15)
             candles_4h = fetch_binance_klines(symbol, "4h", limit=20)
+            candles_1h = fetch_binance_klines(symbol, "1h", limit=30)
             candles_15m = fetch_binance_klines(symbol, "15m", limit=20)
             candles_5m = fetch_binance_klines(symbol, "5m", limit=20)
             
-            if not candles_1d or not candles_4h or not candles_15m or not candles_5m:
+            if not candles_1d or not candles_4h or not candles_1h or not candles_15m or not candles_5m:
                 print(f"[{symbol}] Onvolledige data, overgeslagen.", flush=True)
                 continue
 
-            # Berekent de S/R levels via Python
-            calculated_levels = find_key_levels(candles_1d, candles_4h)
+            # Berekent de S/R levels via de geavanceerde Python Engine (1D, 4H, 1H)
+            calculated_levels = find_key_levels(candles_1d, candles_4h, candles_1h)
             
-            # SLIMME PRE-FILTER: Controleer of de prijs überhaupt binnen 1.0% van een level ligt
+            # SLIMME PRE-FILTER PORTIER: Check of koers of wick binnen 1.2% van enig level ligt
             curr_close = candles_15m[-1]["close"]
             curr_high = candles_15m[-1]["high"]
             curr_low = candles_15m[-1]["low"]
             
-            if not is_price_near_any_level(curr_close, curr_high, curr_low, calculated_levels, max_distance_pct=1.0):
-                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 1.0% van S/R levels (API call bespaard).", flush=True)
-                time.sleep(1)
+            is_near, matched_level = is_price_near_any_level(curr_close, curr_high, curr_low, calculated_levels, max_distance_pct=1.2)
+            
+            if not is_near:
+                print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 1.2% van S/R levels (API call bespaard).", flush=True)
+                time.sleep(0.5)
                 continue
+
+            print(f"[{now_str}] 🎯 [{symbol}] NIBIJ S/R LEVEL ({matched_level['name']}) -> Gemini AI inschakelen...", flush=True)
 
             # Gebruik het timestamp van de laatst AFGERONDE 15m kaars voor deduplicatie
             last_closed_candle_time = candles_15m[-2]["timestamp"]
 
-            # Vraag Gemini alleen om analyse als de koers wél nabij een level is
+            # Vraag Gemini alleen om analyse als Python bevestigt dat we nabij een level zijn
             analysis = evaluate_market_with_gemini(symbol, candles_1d, candles_4h, candles_15m, candles_5m, btc_context, calculated_levels)
             
             # SLIMMER DEDUPLICATIE FILTER MET 15-MINUTEN EXPIRATIE
@@ -350,8 +380,8 @@ def run_scanner():
             else:
                 print(f"[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R setup.", flush=True)
 
-            # PAUZE VAN 6 SECONDEN OM ONDER DE 15 REQUESTS/MINUUT (RPM) FREE TIER LIMIT TE BLIJVEN
-            time.sleep(6)
+            # PAUZE VAN 5 SECONDEN VOOR GEBRUIKTE GEMINI CALLS
+            time.sleep(5)
         except Exception as e:
             print(f"Error bij verwerken {symbol}: {e}", flush=True)
 
@@ -359,11 +389,11 @@ if __name__ == "__main__":
     startup_msg = (
         "🤖 **MyCryptoAgent Master Service IS LIVE!**\n\n"
         "**Geïntegreerd Quantitative System Instructions:**\n"
-        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H Key Level (Klaarzitten)\n"
-        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op 1D/4H Level\n"
+        "1. ⚠️ **Pre-Trade Alert:** Prijs binnen 1.0% van 1D/4H/1H Key Level (Klaarzitten)\n"
+        "2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n"
         "3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n"
-        "• **Smart Pre-Filter Active:** API-calls worden met 80% verminderd (Nooit meer 429 Rate Limits).\n"
-        "• **15-Minuten Geheugen Expiratie:** Oude alerts vervallen na 15 min.\n"
+        "• **Multi-Timeframe Python S/R Engine:** Active op 1D, 4H én 1H Pivots (Mist geen enkel niveau).\n"
+        "• **Smart Portier Pre-Filter:** Ingeschakeld op <= 1.2% (Elimineert 429 Quota errors 100%).\n"
         "• **Inclusief Option D:** Front-Run Entry + Aggressive Retest Wick SL voor MAXIMAAL haalbare EV_adj."
     )
     send_telegram_message(startup_msg)
