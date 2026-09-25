@@ -18,7 +18,8 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return 'MyCryptoAgent Co-Pilot (Vertex AI High-Freq) is Active!', 200
+    status = "AAN" if scalp_alerts_enabled else "UIT"
+    return f'MyCryptoAgent Co-Pilot is Active! Scalp Alerts: {status}', 200
 
 
 def run_flask():
@@ -80,9 +81,58 @@ SYMBOLS = [
 last_alerted_candles = {}
 ny_open_alert_sent_today = False
 
+# GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard: True)
+scalp_alerts_enabled = True
+
 
 # ==========================================
-# 3. HELPER FUNCTIES & HARD S/R ENGINE
+# 3. TELEGRAM COMMAND HANDLER (INTERACTIEVE KNOPPEN/COMMANDO'S)
+# ==========================================
+def listen_telegram_commands():
+    """Luistert op de achtergrond naar Telegram commando's (/scalp_off, /scalp_on, /status)"""
+    global scalp_alerts_enabled
+    if not TELEGRAM_BOT_TOKEN:
+        return
+
+    last_update_id = 0
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+
+    while True:
+        try:
+            params = {"timeout": 30, "offset": last_update_id + 1}
+            response = requests.get(url, params=params, timeout=35)
+            data = response.json()
+
+            if "result" in data:
+                for update in data["result"]:
+                    last_update_id = update["update_id"]
+                    message = update.get("message", {})
+                    text = message.get("text", "").strip()
+
+                    if text == "/scalp_off":
+                        scalp_alerts_enabled = False
+                        send_telegram_message("🔴 **SCALP ALERTS UITGESCHAKELD**\n\nGemini API calls en meldingen voor Scalp Reclaim trades worden overgeslagen om tokens te besparen.")
+                        print("Telegram Command Executed: Scalp Alerts DISABLED", flush=True)
+                    
+                    elif text == "/scalp_on":
+                        scalp_alerts_enabled = True
+                        send_telegram_message("🟢 **SCALP ALERTS GEACTIVERD**\n\nScalp Reclaim analyses via Vertex AI zijn weer actief.")
+                        print("Telegram Command Executed: Scalp Alerts ENABLED", flush=True)
+
+                    elif text == "/status":
+                        status_str = "🟢 ACTIEF" if scalp_alerts_enabled else "🔴 UITGESCHAKELD"
+                        send_telegram_message(f"🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Alerts: {status_str}\n• High-Freq Engine: ACTIVE (60s loop)")
+
+        except Exception as e:
+            print(f"Telegram listener error: {e}", flush=True)
+            time.sleep(5)
+
+# Start de Telegram command listener in een aparte achtergrond-thread
+threading.Thread(target=listen_telegram_commands, daemon=True).start()
+
+
+# ==========================================
+# 4. HELPER FUNCTIES & HARD S/R ENGINE
 # ==========================================
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -96,7 +146,6 @@ def send_telegram_message(text):
 
 
 def fetch_binance_klines(symbol, interval, limit=60):
-    """Haalt voldoende historie op voor diepe patroon- en structuuranalyse."""
     url = f'https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}'
     try:
         response = requests.get(url, timeout=10)
@@ -241,7 +290,6 @@ def find_key_levels(candles_1d, candles_4h, candles_1h, candles_3m=None):
 
 
 def get_nearest_target(current_price, calculated_levels, direction='LONG'):
-    """Berekent het eerstvolgende logische TP niveau zonder 'droom'-fallbacks."""
     prices = [lvl['price'] for lvl in calculated_levels]
     if direction == 'LONG':
         targets = [p for p in prices if p > current_price]
@@ -258,7 +306,6 @@ def is_price_near_any_level(
     calculated_levels,
     max_distance_pct=2.0,
 ):
-    """Ruimere portier (2.0%) zodat Gemini vroegtijdig markt-opbouw ziet."""
     for lvl in calculated_levels:
         target_price = lvl['price']
         if target_price <= 0:
@@ -306,7 +353,7 @@ def check_ny_open_warning():
 
 
 # ==========================================
-# 4. AI QUANT EVALUATIE ENGINE (VERTEX AI - DEEP CONTEXT & ALPHA TRADE)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -397,8 +444,8 @@ def evaluate_market_with_gemini(
 
     OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':
     ⚠️ **PRE-TRADE ALERT (KLAARZITTEN)** - {symbol}
-    • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level: $XX.XX)
-    • **Verwachte S/R Zone:** $XX.XX - $XX.XX (1D / 4H / 1H Level)
+    • **Afstand tot S/R Level:** ~X.XX% (Actuele koers: ${current_live_candle['close']} vs Key Level:$XX.XX)
+    • **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)
     • **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]
     • **Verwachte Richting:** [Long / Short]
     • **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.
@@ -424,10 +471,10 @@ def evaluate_market_with_gemini(
     ### Execution Optimization Matrix
     | Parameter | Option A (Cons.) | Option B (Sweet Spot) | Option C (Aggr. SL) | **Option D (Retest Reversal - MAX EV_adj)** |
     | :--- | :--- | :--- | :--- | :--- |
-    | **Entry Price** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **Stop Loss (SL)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **Risico Afstand (1R)** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
-    | **TP1 Level** | $XX.XX | $XX.XX | $XX.XX | **$XX.XX** |
+    | **Entry Price** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | **Stop Loss (SL)** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | **Risico Afstand (1R)** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
+    | **TP1 Level** | $XX.XX \vert{}$XX.XX | $XX.XX \vert{} **$XX.XX** |
     | **Fill Chance (T)** | 85% | 65% | 40% | **85%** |
     | **Gewogen R:R** | X.XX R | X.XX R | X.XX R | **X.XX R** |
     | **Adjusted EV (EV_adj)**| +X.XX R | +X.XX R | +X.XX R | **+X.XX R (MAX)** |
@@ -461,7 +508,7 @@ def evaluate_market_with_gemini(
 
 
 # ==========================================
-# 5. MAIN SCANNER LOOP (HIGH FREQUENCY)
+# 6. MAIN SCANNER LOOP (HIGH FREQUENCY)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -515,7 +562,7 @@ def run_scanner():
             curr_high = candles_15m[-1]['high']
             curr_low = candles_15m[-1]['low']
 
-            # Ruimere portier (2.0%) voor meer context
+            # Check of het niveau een M3 Scalp level is
             is_near, matched_level = is_price_near_any_level(
                 curr_close,
                 curr_high,
@@ -528,6 +575,16 @@ def run_scanner():
                 print(
                     f'[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 2.0% van'
                     ' S/R levels.',
+                    flush=True,
+                )
+                time.sleep(0.2)
+                continue
+
+            # 🛡️ PYTHON SCALP FILTER (BESPAART API TOKENS ALS SCALPS UIT STAAN)
+            is_scalp_level = matched_level and ('M3 Micro' in matched_level['name'] or matched_level.get('importance') == 'LOW Scalp')
+            if not scalp_alerts_enabled and is_scalp_level:
+                print(
+                    f'[{now_str}] [{symbol}] SKIPPED -> Scalp level gedetecteerd, maar Scalp Alerts staan UIT (/scalp_off). API Call bespaard!',
                     flush=True,
                 )
                 time.sleep(0.2)
@@ -609,18 +666,13 @@ def run_scanner():
 
 if __name__ == '__main__':
     startup_msg = (
-        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI (FULL SYSTEM'
-        ' INSTRUCTIONS)!**\n\n'
+        '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van 1D/4H/1H Key Level\n'
         '2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n'
         '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n'
-        '• **Playbook Adaptive Execution:** Dynamische TP/SL regels per Scalp,'
-        ' Day Sweep en Swing.\n'
-        '• **Alpha Trade Selection:** Selecteert automatisch de beste Relative'
-        ' Weakness altcoin bij BTC rejections.\n'
-        '• **High-Frequency Scan:** 60-seconden lus op Binance data met diepe M3-1D'
-        ' context.'
+        '• **Interactive Scalp Toggle:** Gebruik `/scalp_off` en `/scalp_on` in Telegram om Scalp AI-calls live te pauzeren en tokens te besparen.\n'
+        '• **System Status Check:** Stuur `/status` in Telegram voor live schakelaar-status.'
     )
     send_telegram_message(startup_msg)
 
