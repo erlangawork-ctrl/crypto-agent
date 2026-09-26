@@ -372,7 +372,7 @@ def extract_ev_adj(analysis_text):
 
 
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI - VOLLEDIG GEUNIFICEERD)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -403,6 +403,8 @@ def evaluate_market_with_gemini(
         else "- M1 Candles: NIET ACTIEF (Scalp Mode is UIT)\n"
     )
 
+    scalp_mode_str = "AAN" if scalp_alerts_enabled else "UIT"
+
     alpha_instruction = (
         "HOOGSTE PRIORITEIT (ALPHA TRADE): Deze munt vertoont de hoogste EVadj/relative strength van de scan."
         if is_alpha else "Standaard kwantitatieve valutacheck."
@@ -417,6 +419,11 @@ SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT ({symbol})
 1. ROL: Kwantitatieve Analyst Co-Pilot. Adviseer op basis van +EV, EVadj = T x EV, R:R en strikt risicobeheer.
 2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, R:R naar TP1 >= 1.20R. Min SL afstand: {min_sl_pct}%.
 3. PRIORITEIT: {alpha_instruction}
+
+STRIKT HTF LEVEL DOMINANTIE RULES (SCALP MODE = {scalp_mode_str}):
+- NO-LONG-INTO-HTF-RESISTANCE: Als Scalp Mode UIT staat, negeer micro breakouts op M1/M3/M5/M15 als de koers direct onder een HTF Resistance (1H/4H/1D) staat.
+- HTF TP1 CEILING CAP: De dichtstbijzijnde HTF Resistance geldt verplicht als TP1 plafond voor Longs. Als de ruimte tot deze weerstand geen R:R van minimaal 1.2R oplevert (met min SL {min_sl_pct}%), wijs de trade AUTOMATISCH AF als [NO-GO].
+- REJECTION BIAS SHIFT: Bij het naderen van een HTF Resistance met Scalp Mode UIT, richt je uitsluitend op een SHORT Rejection setup (M3/M5 rejection wick) in plaats van een Long breakout.
 
 CONTEXT {symbol}:
 - Huidige Prijs: ${curr_price}
@@ -434,7 +441,7 @@ VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT):
 
 1. ALS STATUS = NO-GO:
 GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
-Korte Analyse: [1-2 zinnen met de exacte reden].
+Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resistance, SL < minimum %, of M3/M5 reversal ontbreekt].
 
 2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.5% van Level, wachten op reversal):
 ⚠️ PRE-TRADE ALERT - {symbol}
@@ -457,7 +464,6 @@ Trade Setup (Optimum Scenario D - Retest Reversal / Max EVadj):
 • Winkans (P): XX%
 • Setup Score: XX%
 • Fill Chance (T): XX%
-• Expected Value (EV): +X.XX R
 
 4. ALS STATUS = GO (M3/M5 Reversal definitief afgerond + EVadj > +0.30R):
 {go_header_str}
@@ -475,7 +481,6 @@ Trade Setup (Optimum Scenario D - Retest Reversal / Max EVadj):
 • **Winkans (P):** **XX%**
 • **Setup Score:** **XX%**
 • **Fill Chance (T):** **XX%**
-• **Expected Value (EV):** **+X.XX R**
 
 Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
 """
@@ -501,7 +506,7 @@ Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (INCLUSIEF EVadj ALPHA Trade SORTING ENGINE)
+# 6. MAIN SCANNER LOOP (INCLUSIEF EVadj ALPHA TRADE SORTING ENGINE)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
