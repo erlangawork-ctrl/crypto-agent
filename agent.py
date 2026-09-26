@@ -380,7 +380,7 @@ def extract_ev_adj(analysis_text):
 
 
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI - SLIMME TREND CHECK)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI - MET HARDE P THRESHOLD)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -401,7 +401,7 @@ def evaluate_market_with_gemini(
     current_live_candle = candles_15m[-1]
     curr_price = current_live_candle['close']
 
-    # 🛡️ PYTHON TREND CHECK: Controleer of de M15 kaarsen naar beneden drukken (Breakdown momentum)
+    # 🛡️ PYTHON TREND CHECK: Controleer of de M15 kaarsen naar beneden drukken
     m15_is_bearish = (
         candles_15m[-1]['close'] < candles_15m[-2]['close']
         and candles_15m[-2]['close'] < candles_15m[-3]['close']
@@ -436,14 +436,15 @@ def evaluate_market_with_gemini(
 SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT ({symbol})
 
 1. ROL: Kwantitatieve Analyst Co-Pilot. Adviseer op basis van +EV, EVadj = T x EV, R:R en strikt risicobeheer.
-2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, R:R naar TP1 >= 1.20R. Min SL afstand verplicht: {min_sl_pct}%.
+2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, Winkans (P) verplicht >= 58% (A Rating) of >= 70% (A+ Rating). R:R naar TP1 >= 1.20R. Min SL afstand verplicht: {min_sl_pct}%.
 3. PRIORITEIT: {alpha_instruction}
 4. MOMENTUM BIAS: {trend_warning}
 
 STRIKT HTF LEVEL DOMINANTIE & REVERSAL GUARDRAILS (SCALP MODE = {scalp_mode_str}):
 - NO-LONG-INTO-HTF-RESISTANCE: Als Scalp Mode UIT staat, negeer micro breakouts op M1/M3/M5/M15 als de koers direct onder een HTF Resistance (4H/1D) staat.
 - HTF TP1 CEILING CAP: De dichtstbijzijnde HTF Resistance geldt verplicht als TP1 plafond voor Longs. Als de ruimte tot deze weerstand geen R:R van minimaal 1.2R oplevert (met min SL {min_sl_pct}%), wijs de trade AUTOMATISCH AF als [NO-GO].
-- HARD REVERSAL VALIDATION RULE (VOORKOM FALSE LONG GO'S): Voor een [GO] status op een LONG moet de meest recente M3 of M5 candle BEVESTIGD GROEN (Bullish close) zijn en opwaartse afwijzing tonen BÓVEN het S/R level. Als de koers met rode kaarsen door het niveau zakt, onder het niveau sluit of al onder de voorgestelde Stop Loss staat, wijs een Long trade VERPLICHT af als [NO-GO] of evalueer een SHORT breakdown retest setup.
+- HARD P-THRESHOLD GUARDRAIL: Als de berekende Winkans (P) lager is dan 58% (bijv. P = 40%), is er sprake van een B-Setup. Dit MOET AUTOMATISCH LEIDEN TOT EEN [NO-GO] VERDICT. Het is STRIKT VERBODEN om een [GO] uit te spreken bij P < 58%!
+- HARD REVERSAL VALIDATION RULE: Voor een [GO] status op een LONG moet de meest recente M3 of M5 candle BEVESTIGD GROEN (Bullish close) zijn en opwaartse afwijzing tonen BÓVEN het S/R level. Als de koers met rode kaarsen door het niveau zakt of al onder de voorgestelde Stop Loss staat, wijs een Long trade VERPLICHT af als [NO-GO].
 
 CONTEXT {symbol}:
 - Huidige Prijs: ${curr_price}
@@ -461,7 +462,7 @@ VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT EN VOEG GEEN EXTR
 
 1. ALS STATUS = NO-GO:
 GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
-Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resistance, SL < minimum %, koers breekt door support zonder reversal, of M3/M5 reversal ontbreekt].
+Korte Analyse: [1-2 zinnen met de exacte reden: bijv. Winkans P < 58%, R:R < 1.2R naar HTF resistance, SL < minimum %, koers breekt door support zonder reversal, of M3/M5 reversal ontbreekt].
 
 2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.2% van Level, wachten op reversal):
 ⚠️ PRE-TRADE ALERT - {symbol}
@@ -487,7 +488,7 @@ Trade Setup (Optimum Scenario D - Retest Reversal / Max EVadj):
 • Setup Score: XX%
 • Fill Chance (T): XX%
 
-4. ALS STATUS = GO (M3/M5 Reversal definitief afgerond + EVadj > +0.30R):
+4. ALS STATUS = GO (M3/M5 Reversal afgerond + P >= 58% + EVadj > +0.30R):
 {go_header_str}
 
 • **Verdict:** **[GO]** (Rating: [A+ | A] | Score: XX% | MAX EVadj: +X.XX R)
@@ -528,7 +529,7 @@ Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (INCLUSIEF ANTI-CRASH & ANTI-SPAM PROTECTIE)
+# 6. MAIN SCANNER LOOP (INCLUSIEF PYTHON P-THRESHOLD FILTER)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -660,6 +661,15 @@ def run_scanner():
             is_watchlist = 'WATCHLIST' in analysis and not is_no_go
             is_pretrade = 'PRE-TRADE' in analysis and not is_no_go
 
+            # 🛡️ HARD PYTHON P-THRESHOLD CHECK: Extra beveiliging tegen $P < 58\%$ calls!
+            p_match = re.search(r'Winkans\s*\(P\):\s*(\d+)%', analysis, re.IGNORECASE)
+            if is_go and p_match:
+                win_rate = int(p_match.group(1))
+                if win_rate < 58:
+                    print(f'[{symbol}] 🛡️ GO GEBLOKKEERD DOOR PYTHON: Winkans P ({win_rate}%) is lager dan drempel 58%.', flush=True)
+                    is_go = False
+                    is_no_go = True
+
             phase_suffix = "_NO_GO"
             if is_go:
                 phase_suffix = "_GO"
@@ -698,7 +708,7 @@ if __name__ == '__main__':
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.2% van 4H+ HTF Key Level (Snoep-formaat, max 1x/uur)\n'
         '2. 👁️ **Watchlist:** Full setup (Scenario D) + Multi-Asset Alpha Trade Sorting Engine\n'
-        '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal\n\n'
+        '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal (P >= 58%)\n\n'
         '🛡️ **Cost Guardrail:** Compact Payload + Flash-Only actief (Gegarandeerd < €5/maand).'
     )
     send_telegram_message(startup_msg)
