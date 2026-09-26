@@ -16,7 +16,7 @@ import requests
 # ==========================================
 app = Flask(__name__)
 
-# GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard: True)
+# GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard op FALSE bij deployment)
 scalp_alerts_enabled = False
 
 
@@ -164,17 +164,19 @@ def fetch_binance_klines(symbol, interval, limit=60):
     try:
         response = requests.get(url, timeout=10)
         data = response.json()
-        return [
-            {
-                'timestamp': c[0],
-                'open': float(c[1]),
-                'high': float(c[2]),
-                'low': float(c[3]),
-                'close': float(c[4]),
-                'volume': float(c[5]),
-            }
-            for c in data
-        ]
+        if isinstance(data, list):
+            return [
+                {
+                    'timestamp': c[0],
+                    'open': float(c[1]),
+                    'high': float(c[2]),
+                    'low': float(c[3]),
+                    'close': float(c[4]),
+                    'volume': float(c[5]),
+                }
+                for c in data
+            ]
+        return []
     except Exception as e:
         print(f'Binance fetch error {symbol}: {e}', flush=True)
         return []
@@ -367,7 +369,6 @@ def check_ny_open_warning():
 
 
 def extract_ev_adj(analysis_text):
-    """Extraheert de numerieke waarde van EVadj uit de AI respons voor vergelijking/sorting."""
     match = re.search(r'EV_?adj:?\s*\+?(-?\d+\.?\d*)', analysis_text, re.IGNORECASE)
     if match:
         try:
@@ -514,7 +515,7 @@ Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (INCLUSIEF ANTI-SPAM FILTER)
+# 6. MAIN SCANNER LOOP (INCLUSIEF ANTI-CRASH & ANTI-SPAM PROTECTIE)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -529,7 +530,7 @@ def run_scanner():
 
     btc_15m = fetch_binance_klines('BTCUSDT', '15m', limit=10)
     if not btc_15m:
-        print('Geen BTC data ontvangen, scan overgeslagen.', flush=True)
+        print('Geen BTC data ontvangen van Binance, scan overgeslagen.', flush=True)
         return
 
     btc_context = {
@@ -543,7 +544,7 @@ def run_scanner():
 
     scanned_results = []
 
-    # PASS 1: Verzamel data & voer eerste evaluatie uit
+    # PASS 1: Verzamel data & voer evaluaties uit per munt
     for symbol in SYMBOLS:
         try:
             candles_1d = fetch_binance_klines(symbol, '1d', limit=15)
@@ -560,6 +561,7 @@ def run_scanner():
             )
 
             if not (candles_1d and candles_4h and candles_1h and candles_15m and candles_5m and candles_3m):
+                print(f'[{symbol}] Onvolledige kline data. Overgeslagen.', flush=True)
                 continue
 
             calculated_levels = find_key_levels(
@@ -579,6 +581,7 @@ def run_scanner():
             )
 
             if not is_near_htf:
+                print(f'[{symbol}] Geen HTF S/R nabij (> 0.5%).', flush=True)
                 continue
 
             is_pure_scalp = matched_level.get('importance') == 'LOW Scalp'
@@ -587,11 +590,12 @@ def run_scanner():
             reward_pct = abs(nearest_tp - curr_close) / curr_close * 100
 
             if is_pure_scalp and reward_pct < 0.20:
+                print(f'[{symbol}] Pure scalp TP1 te dichtbij ({reward_pct:.2f}%). Overgeslagen.', flush=True)
                 continue
 
             last_closed_candle_time = candles_15m[-2]['timestamp']
 
-            # Eerste evaluatie
+            # Gemini Oproepen
             analysis = evaluate_market_with_gemini(
                 symbol, candles_1d, candles_4h, candles_1h, candles_15m,
                 candles_5m, candles_3m, candles_1m, btc_context, calculated_levels, is_alpha=False
@@ -609,17 +613,16 @@ def run_scanner():
 
             time.sleep(0.2)
         except Exception as e:
-            print(f'Error bij verwerken {symbol}: {e}', flush=True)
+            print(f'Fout bij scannen {symbol}: {e}', flush=True)
 
     if not scanned_results:
-        print(f'[{now_str}] Geen actieve S/R setups gevonden in deze scan.', flush=True)
+        print(f'[{now_str}] Markt-scan afgerond. Geen S/R kandidaten binnen <= 0.5%.', flush=True)
         return
 
-    # PASS 2: Bepaal de Alpha Trade (Hoogste EVadj)
+    # PASS 2: Bepaal Alpha Trade
     scanned_results.sort(key=lambda x: x['ev_adj'], reverse=True)
     best_candidate = scanned_results[0]
 
-    # Als de hoogste EVadj > 0.30R is, re-evalueren we die specifieke winnaar als ALPHA TRADE
     if best_candidate['ev_adj'] > 0.30:
         alpha_symbol = best_candidate['symbol']
         raw = best_candidate['raw_data']
@@ -629,48 +632,51 @@ def run_scanner():
         if alpha_analysis:
             best_candidate['analysis'] = alpha_analysis
 
-    # PASS 3: Verstuur de alerts in volgorde MET ANTI-SPAM FILTER
+    # PASS 3: Verstuur alerts
     for item in scanned_results:
-        symbol = item['symbol']
-        analysis = item['analysis']
-        last_closed_candle_time = item['timestamp']
+        try:
+            symbol = item['symbol']
+            analysis = item['analysis']
+            last_closed_candle_time = item['timestamp']
 
-        first_line = analysis.split('\n')[0] if analysis else 'EMPTY'
-        print(f'[{now_str}] 🤖 [VERTEX RESPONSE {symbol} | EVadj: {item["ev_adj"]}]: {first_line}', flush=True)
+            first_line = analysis.split('\n')[0] if analysis else 'EMPTY'
+            print(f'[{now_str}] 🤖 [VERTEX RESPONSE {symbol} | EVadj: {item["ev_adj"]}]: {first_line}', flush=True)
 
-        is_no_go = '[NO-GO]' in analysis or 'NO-GO' in first_line
-        is_go = (re.search(r'\bGO\b', analysis) or '[GO]' in analysis) and not is_no_go
-        is_watchlist = 'WATCHLIST' in analysis and not is_no_go
-        is_pretrade = 'PRE-TRADE' in analysis and not is_no_go
+            is_no_go = '[NO-GO]' in analysis or 'NO-GO' in first_line
+            is_go = (re.search(r'\bGO\b', analysis) or '[GO]' in analysis) and not is_no_go
+            is_watchlist = 'WATCHLIST' in analysis and not is_no_go
+            is_pretrade = 'PRE-TRADE' in analysis and not is_no_go
 
-        phase_suffix = "_NO_GO"
-        if is_go:
-            phase_suffix = "_GO"
-        elif is_watchlist:
-            phase_suffix = "_WATCHLIST"
-        elif is_pretrade:
-            phase_suffix = "_PRE"
+            phase_suffix = "_NO_GO"
+            if is_go:
+                phase_suffix = "_GO"
+            elif is_watchlist:
+                phase_suffix = "_WATCHLIST"
+            elif is_pretrade:
+                phase_suffix = "_PRE"
 
-        # 🛡️ ANTI-SPAM COOLDOWN VOOR PRE-TRADE ALERTS (Max 1x per 60 minuten per coin)
-        if phase_suffix == "_PRE":
-            last_pre_key = f"{symbol}_PRE_TIME"
-            if last_pre_key in last_alerted_candles and (time.time() - last_alerted_candles[last_pre_key]) < 3600:
-                print(f'[{symbol}] PRE-TRADE alert reeds verstuurd in het afgelopen uur. Overgeslagen.', flush=True)
+            # 🛡️ ANTI-SPAM COOLDOWN VOOR PRE-TRADE ALERTS (Max 1x per 60 minuten per coin)
+            if phase_suffix == "_PRE":
+                last_pre_key = f"{symbol}_PRE_TIME"
+                if last_pre_key in last_alerted_candles and (time.time() - last_alerted_candles[last_pre_key]) < 3600:
+                    print(f'[{symbol}] PRE-TRADE alert reeds verstuurd in het afgelopen uur. Overgeslagen.', flush=True)
+                    continue
+                last_alerted_candles[last_pre_key] = time.time()
+
+            alert_key = f"{symbol}_{last_closed_candle_time}{phase_suffix}"
+
+            if phase_suffix != "_NO_GO" and alert_key in last_alerted_candles:
+                print(f'[{symbol}] Fase {phase_suffix} reeds gemeld. Overgeslagen.', flush=True)
                 continue
-            last_alerted_candles[last_pre_key] = time.time()
 
-        alert_key = f"{symbol}_{last_closed_candle_time}{phase_suffix}"
-
-        if phase_suffix != "_NO_GO" and alert_key in last_alerted_candles:
-            print(f'[{symbol}] Fase {phase_suffix} reeds gemeld. Overgeslagen.', flush=True)
-            continue
-
-        if phase_suffix != "_NO_GO":
-            send_telegram_message(analysis)
-            last_alerted_candles[alert_key] = time.time()
-            print(f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} ({phase_suffix}) NAAR TELEGRAM!', flush=True)
-        else:
-            last_alerted_candles[alert_key] = time.time()
+            if phase_suffix != "_NO_GO":
+                send_telegram_message(analysis)
+                last_alerted_candles[alert_key] = time.time()
+                print(f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} ({phase_suffix}) NAAR TELEGRAM!', flush=True)
+            else:
+                last_alerted_candles[alert_key] = time.time()
+        except Exception as e:
+            print(f'Fout bij versturen alert voor {item.get("symbol")}: {e}', flush=True)
 
 
 if __name__ == '__main__':
@@ -688,5 +694,5 @@ if __name__ == '__main__':
         try:
             run_scanner()
         except Exception as e:
-            print(f'Loop error: {e}', flush=True)
+            print(f'Scanner loop exception: {e}', flush=True)
         time.sleep(60)
