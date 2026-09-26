@@ -380,7 +380,7 @@ def extract_ev_adj(analysis_text):
 
 
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI - SLIMME TREND CHECK)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -400,6 +400,12 @@ def evaluate_market_with_gemini(
 
     current_live_candle = candles_15m[-1]
     curr_price = current_live_candle['close']
+
+    # 🛡️ PYTHON TREND CHECK: Controleer of de M15 kaarsen naar beneden drukken (Breakdown momentum)
+    m15_is_bearish = (
+        candles_15m[-1]['close'] < candles_15m[-2]['close']
+        and candles_15m[-2]['close'] < candles_15m[-3]['close']
+    )
 
     nearest_long_tp = get_nearest_target(curr_price, calculated_levels, 'LONG')
     nearest_short_tp = get_nearest_target(curr_price, calculated_levels, 'SHORT')
@@ -421,17 +427,23 @@ def evaluate_market_with_gemini(
     alpha_status_str = '🔥 POTENTIËLE ALPHA TRADE' if is_alpha else 'Normale Watchlist'
     go_header_str = f'🟢 **ALPHA TRADE GO - {symbol}** 🟢' if is_alpha else f'🟢 **TRADE GO - {symbol}** 🟢'
 
+    trend_warning = (
+        "⚠️ WAARSCHUWING: De M15 timeframe toont krachtige neerwaartse druk (opeenvolgende rode closes). Neem GEEN blinde Long! Evalueer een SHORT breakdown/retest setup als de support breekt."
+        if m15_is_bearish else "Intraday momentum is neutraal/bullish."
+    )
+
     prompt = f"""
 SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT ({symbol})
 
 1. ROL: Kwantitatieve Analyst Co-Pilot. Adviseer op basis van +EV, EVadj = T x EV, R:R en strikt risicobeheer.
-2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, R:R naar TP1 >= 1.20R. Min SL afstand: {min_sl_pct}%.
+2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, R:R naar TP1 >= 1.20R. Min SL afstand verplicht: {min_sl_pct}%.
 3. PRIORITEIT: {alpha_instruction}
+4. MOMENTUM BIAS: {trend_warning}
 
-STRIKT HTF LEVEL DOMINANTIE RULES (SCALP MODE = {scalp_mode_str}):
-- NO-LONG-INTO-HTF-RESISTANCE: Als Scalp Mode UIT staat, negeer micro breakouts op M1/M3/M5/M15 als de koers direct onder een HTF Resistance (1H/4H/1D) staat.
+STRIKT HTF LEVEL DOMINANTIE & REVERSAL GUARDRAILS (SCALP MODE = {scalp_mode_str}):
+- NO-LONG-INTO-HTF-RESISTANCE: Als Scalp Mode UIT staat, negeer micro breakouts op M1/M3/M5/M15 als de koers direct onder een HTF Resistance (4H/1D) staat.
 - HTF TP1 CEILING CAP: De dichtstbijzijnde HTF Resistance geldt verplicht als TP1 plafond voor Longs. Als de ruimte tot deze weerstand geen R:R van minimaal 1.2R oplevert (met min SL {min_sl_pct}%), wijs de trade AUTOMATISCH AF als [NO-GO].
-- REJECTION BIAS SHIFT: Bij het naderen van een HTF Resistance met Scalp Mode UIT, richt je uitsluitend op een SHORT Rejection setup (M3/M5 rejection wick) in plaats van een Long breakout.
+- HARD REVERSAL VALIDATION RULE (VOORKOM FALSE LONG GO'S): Voor een [GO] status op een LONG moet de meest recente M3 of M5 candle BEVESTIGD GROEN (Bullish close) zijn en opwaartse afwijzing tonen BÓVEN het S/R level. Als de koers met rode kaarsen door het niveau zakt, onder het niveau sluit of al onder de voorgestelde Stop Loss staat, wijs een Long trade VERPLICHT af als [NO-GO] of evalueer een SHORT breakdown retest setup.
 
 CONTEXT {symbol}:
 - Huidige Prijs: ${curr_price}
@@ -445,11 +457,11 @@ RECENTE MARKT DATA ({symbol}):
 - M3 Candles (Laatste 5): {json.dumps(candles_3m[-5:])}
 {m1_prompt_block}
 
-VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT EN VOEG GEEN EXTRA VELDEN/ANALYSES TOE):
+VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT EN VOEG GEEN EXTRA VELDEN/TABELLEN TOE):
 
 1. ALS STATUS = NO-GO:
 GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
-Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resistance, SL < minimum %, of M3/M5 reversal ontbreekt].
+Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resistance, SL < minimum %, koers breekt door support zonder reversal, of M3/M5 reversal ontbreekt].
 
 2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.2% van Level, wachten op reversal):
 ⚠️ PRE-TRADE ALERT - {symbol}
