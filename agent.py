@@ -393,14 +393,14 @@ def evaluate_market_with_gemini(
     )
 
     prompt = (
-        "Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto (" + str(symbol) + ").\n"
-        "Analyseer de live data volgens de System Instructions. BEREKEN EXPLICIET DE ADJUSTED EV (EV_adj = T * EV) ALS LEIDENDE METRIC.\n\n"
+        "SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT (" + str(symbol) + ")\n"
+        "1. ROL & HOOFDDOEL: Je bent een meedogenloze, kwantitatieve Trading Analyst Co-Pilot gespecialiseerd in Crypto. Je adviseert op basis van pure statistische Expected Value (+EV), Adjusted Expected Value (EV_adj = T * EV), waarschijnlijkheidsverdelingen, Order Fill Chance (T) en strikt risicobeheer. Er is geen ruimte voor emotionele ruis of vage voorspellingen.\n\n"
         "CONTEXT BTCUSDT: Price = $" + str(btc_context['close']) + ", 15m Trend = " + str(btc_context['trend']) + "\n"
         "HARD KEY LEVELS VOOR " + str(symbol) + ": " + json.dumps(calculated_levels) + "\n\n"
         "VERPLICHTE BEREKENDE HARD TP1 TARGETS:\n"
         "- Als LONG trade: TP1 IS VERPLICHT MATEMATISCH $ " + str(nearest_long_tp) + "\n"
         "- Als SHORT trade: TP1 IS VERPLICHT MATEMATISCH $ " + str(nearest_short_tp) + "\n\n"
-        "TARGET ASSET UITGEBREIDE DIEPE HISTORIE DATA (" + str(symbol) + "):\n"
+        "TARGET ASSET HISTORIE DATA (" + str(symbol) + "):\n"
         "- 1D Candles (Laatste 10): " + json.dumps(candles_1d[-10:]) + "\n"
         "- 4H Candles (Laatste 15): " + json.dumps(candles_4h[-15:]) + "\n"
         "- 1H Candles (Laatste 20): " + json.dumps(candles_1h[-20:]) + "\n"
@@ -408,24 +408,20 @@ def evaluate_market_with_gemini(
         "- M5 Candles (Laatste 20): " + json.dumps(candles_5m[-20:]) + "\n"
         "- M3 Candles (Micro Reversal & Volume - Laatste 20): " + json.dumps(candles_3m[-20:]) + "\n"
         + m1_prompt_block + "\n"
-        "ALPHA TRADE SELECTION & BTC CORRELATIE LOGICA:\n"
-        "- BTC ANKER LOGICA: BTCUSDT bepaalt de algemene markt-richting. Als BTC op S/R stuit en afketst, worden altcoins meegesleurd.\n"
-        "- RELATIVE WEAKNESS BONUS: Als dit een altcoin is (" + str(symbol) + " != BTCUSDT) en BTC geeft een Short-rejection, maar " + str(symbol) + " heeft een nog zwakkere marktstructuur (gebroken 1H support) of strakkere M3 wick SL, verhoog P met +12% tot +15%.\n"
-        "- ALPHA VERGELIJKING: Vermeld in het bericht expliciet of deze asset een HOGERE EV_adj levert dan BTCUSDT als ALPHA TRADE SELECTION.\n\n"
         "PLAYBOOK SPECIFIEKE SL / TP EXECUTION REGELS:\n"
         "1. ALS PLAYBOOK = [SCALP RECLAIM] (M3/M5 Micro Reclaim):\n"
-        "   - Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal " + str(min_sl_pct) + "%).\n"
-        "   - TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!\n"
+        "   - Stop Loss (SL): Strak onder/boven M3/M5 wick (Minimaal " + str(min_sl_pct) + "%).\n"
+        "   - TP1 Level (70% SCALE-OUT): Eerstvolgende M15 of 1H Micro-level.\n"
         "   - R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.\n"
         "   - ENTRY TRIGGER: Voor Scalp Reclaims is een 15m close OPTIONEEL. Een M3 Close met een bevestigde M1/M3 Reversal Candle (volume >= 1.5x SMA 9) is VOLDOENDE voor een GO!\n"
         "2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):\n"
-        "   - Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.\n"
-        "   - TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.\n"
+        "   - Stop Loss (SL): Onder/boven 15m/1H sweep wick high/low.\n"
+        "   - TP1 Level (50% SCALE-OUT): Eerstvolgende 1H/4H Key Level.\n"
         "   - R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.\n"
         "   - ENTRY TRIGGER: 15m Full Body Close (wick <= 30%) VERPLICHT.\n"
         "3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):\n"
-        "   - Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.\n"
-        "   - TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.\n"
+        "   - Stop Loss (SL): Ruim onder/boven 4H/Daily swing structuur zone.\n"
+        "   - TP1 Level (30% SCALE-OUT): Major Daily/Weekly Resistance/Support.\n"
         "   - R:R Target: TP1 MOET minimaal >= 2.0R bieden.\n"
         "   - ENTRY TRIGGER: 15m/1H Full Body Close VERPLICHT.\n\n"
         "STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):\n"
@@ -433,8 +429,8 @@ def evaluate_market_with_gemini(
         "2. Beloning naar TP1 = |TP1 - Entry|.\n"
         "3. R:R naar TP1 = Beloning / 1R.\n"
         "4. Als R:R naar TP1 voor Optie A of B < 1.20R IS HET VERDICT AUTOMATISCH 'NO-GO'!\n"
-        "5. MINIMUM SL AFSTAND: De afstand tussen Entry en SL MOET minimaal " + str(min_sl_pct) + "% bedragen op deze asset (" + str(symbol) + ").\n"
-        "6. Formule EV_adj = T * ((P * R_gewogen) - ((1 - P) * 1R)). Reken dit MATHEMATISCH EXACT UIT zonder hallucinaties!\n"
+        "5. MINIMUM SL AFSTAND: De afstand tussen Entry en SL MOET minimaal " + str(min_sl_pct) + "% bedragen op deze asset.\n"
+        "6. Formule EV_adj = T * ((P * R_gewogen) - ((1 - P) * 1R)). Reken dit MATHEMATISCH EXACT UIT!\n"
         "7. GEEN BLINDE LIMIT ORDERS: Optie D mag alleen gekozen worden als er al een M3/M5 reversal candle IS AFGEROND!\n\n"
         "KWANTITATIEVE SCORING MATRIX:\n"
         "1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)\n"
@@ -618,6 +614,14 @@ def run_scanner():
                 calculated_levels,
             )
 
+            # BUG CONSOLE DEBUG PRINT: Print altijd de eerste regel van Vertex AI op Render!
+            if analysis:
+                first_line = analysis.split('\n')[0] if analysis else 'EMPTY'
+                print(
+                    f'[{now_str}] 🤖 [VERTEX RESPONSE {symbol}]: {first_line}',
+                    flush=True,
+                )
+
             if analysis:
                 is_go_alert = (
                     '🚨 **GO**' in analysis or 'GO / NO-GO VERDICT: **GO**' in analysis
@@ -636,12 +640,30 @@ def run_scanner():
                     )
                     continue
 
-                send_telegram_message(analysis)
-                last_alerted_candles[alert_key] = time.time()
-                print(
-                    f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} NAAR TELEGRAM!',
-                    flush=True,
+                # SOEPELE FILTER: Pre-Trade, Watchlist & GO direct naar Telegram sturen!
+                is_valid_alert = any(
+                    keyword in analysis
+                    for keyword in [
+                        'PRE-TRADE',
+                        'WATCHLIST',
+                        '🚨 **GO**',
+                        'PRE-TRADE ALERT',
+                    ]
                 )
+
+                if is_valid_alert:
+                    send_telegram_message(analysis)
+                    last_alerted_candles[alert_key] = time.time()
+                    print(
+                        f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} NAAR TELEGRAM!',
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f'[{now_str}] [{symbol}] AI Verdict is NO-GO of afwijkend'
+                        ' format. Geen Telegram-bericht.',
+                        flush=True,
+                    )
 
             time.sleep(0.5)
         except Exception as e:
