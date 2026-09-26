@@ -114,7 +114,7 @@ def listen_telegram_commands():
                         scalp_alerts_enabled = False
                         send_telegram_message(
                             '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nUitsluitend 4H+ en 1D HTF'
-                            ' Key Levels worden gemonitord.'
+                            ' Key Levels (binnen 0.2%) worden gemonitord.'
                         )
                         print('Telegram Command: Scalp Alerts DISABLED', flush=True)
 
@@ -128,7 +128,7 @@ def listen_telegram_commands():
 
                     elif text == '/status':
                         status_str = (
-                            '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD (4H+ Mode)'
+                            '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD (4H+ Mode / 0.2%)'
                         )
                         send_telegram_message(
                             f'🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode: {status_str}\n• Engine: ACTIVE (60s loop)'
@@ -320,7 +320,7 @@ def get_nearest_target(current_price, calculated_levels, direction='LONG'):
 def is_price_near_any_htf_level(
     current_price, high_price, low_price, calculated_levels
 ):
-    """Checkt of de prijs binnen 0.5% van een S/R niveau staat."""
+    """Checkt of de prijs binnen 0.2% van een S/R niveau staat."""
     for lvl in calculated_levels:
         importance = lvl.get('importance', '')
 
@@ -333,7 +333,8 @@ def is_price_near_any_htf_level(
         dist_high = abs(high_price - target_price) / target_price * 100
         dist_low = abs(low_price - target_price) / target_price * 100
 
-        if dist_close <= 0.5 or dist_high <= 0.5 or dist_low <= 0.5:
+        # 🎯 CHOKEPOINT INGESTELD OP <= 0.2%
+        if dist_close <= 0.2 or dist_high <= 0.2 or dist_low <= 0.2:
             return True, lvl
     return False, None
 
@@ -450,11 +451,11 @@ VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT EN VOEG GEEN EXTR
 GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
 Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resistance, SL < minimum %, of M3/M5 reversal ontbreekt].
 
-2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.5% van Level, wachten op reversal):
+2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.2% van Level, wachten op reversal):
 ⚠️ PRE-TRADE ALERT - {symbol}
 • Actuele Koers: ${curr_price}
 • Naderende S/R Prijs: $XX.XX
-• Type S/R: [bijv. 1D PDH / 4H Swing High / 1H Support]
+• Type S/R: [bijv. 1D PDH / 4H Swing High]
 
 (STRIKT VERBODEN: VOEG GEEN ANALYSE, GEEN TRADE SETUP, GEEN EVADJ EN GEEN EXTRA REGELS TOE BIJ PRE-TRADE ALERTS!)
 
@@ -581,7 +582,7 @@ def run_scanner():
             )
 
             if not is_near_htf:
-                print(f'[{symbol}] Geen HTF S/R nabij (> 0.5%).', flush=True)
+                print(f'[{symbol}] Geen HTF S/R nabij (> 0.2%).', flush=True)
                 continue
 
             is_pure_scalp = matched_level.get('importance') == 'LOW Scalp'
@@ -616,7 +617,7 @@ def run_scanner():
             print(f'Fout bij scannen {symbol}: {e}', flush=True)
 
     if not scanned_results:
-        print(f'[{now_str}] Markt-scan afgerond. Geen S/R kandidaten binnen <= 0.5%.', flush=True)
+        print(f'[{now_str}] Markt-scan afgerond. Geen S/R kandidaten binnen <= 0.2%.', flush=True)
         return
 
     # PASS 2: Bepaal Alpha Trade
@@ -683,7 +684,7 @@ if __name__ == '__main__':
     startup_msg = (
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
-        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van 4H+ HTF Key Level (Snoep-formaat, max 1x/uur)\n'
+        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.2% van 4H+ HTF Key Level (Snoep-formaat, max 1x/uur)\n'
         '2. 👁️ **Watchlist:** Full setup (Scenario D) + Multi-Asset Alpha Trade Sorting Engine\n'
         '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal\n\n'
         '🛡️ **Cost Guardrail:** Compact Payload + Flash-Only actief (Gegarandeerd < €5/maand).'
