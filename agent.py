@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -150,7 +151,10 @@ def send_telegram_message(text):
     url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
     payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'Markdown'}
     try:
-        requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code != 200:
+            payload_plain = {'chat_id': TELEGRAM_CHAT_ID, 'text': text}
+            requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
         print(f'Telegram error: {e}', flush=True)
 
@@ -314,20 +318,15 @@ def get_nearest_target(current_price, calculated_levels, direction='LONG'):
 def is_price_near_any_htf_level(
     current_price, high_price, low_price, calculated_levels
 ):
-    """Checkt of de prijs (Close, High of Low Wick) binnen 0.5% van een HTF S/R niveau staat."""
+    """Checkt of de prijs (Close, High of Low Wick) binnen 0.5% van een S/R niveau staat."""
     for lvl in calculated_levels:
-        if lvl.get('importance') in [
-            'CRITICAL HTF',
-            'HIGH HTF',
-            'MEDIUM Intraday',
-        ]:
-            target_price = lvl['price']
-            dist_close = abs(current_price - target_price) / target_price * 100
-            dist_high = abs(high_price - target_price) / target_price * 100
-            dist_low = abs(low_price - target_price) / target_price * 100
+        target_price = lvl['price']
+        dist_close = abs(current_price - target_price) / target_price * 100
+        dist_high = abs(high_price - target_price) / target_price * 100
+        dist_low = abs(low_price - target_price) / target_price * 100
 
-            if dist_close <= 0.5 or dist_high <= 0.5 or dist_low <= 0.5:
-                return True, lvl
+        if dist_close <= 0.5 or dist_high <= 0.5 or dist_low <= 0.5:
+            return True, lvl
     return False, None
 
 
@@ -361,8 +360,19 @@ def check_ny_open_warning():
         ny_open_alert_sent_today = True
 
 
+def extract_ev_adj(analysis_text):
+    """Extraheert de numerieke waarde van EVadj uit de AI respons voor vergelijking/sorting."""
+    match = re.search(r'EV_?adj:?\s*\+?(-?\d+\.?\d*)', analysis_text, re.IGNORECASE)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return -999.0
+    return -999.0
+
+
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (COMPACT & FLASH ONLY - MAX BESPARING)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -375,6 +385,7 @@ def evaluate_market_with_gemini(
     candles_1m,
     btc_context,
     calculated_levels,
+    is_alpha=False
 ):
     if not ai_client:
         return None
@@ -386,49 +397,89 @@ def evaluate_market_with_gemini(
     nearest_short_tp = get_nearest_target(curr_price, calculated_levels, 'SHORT')
     min_sl_pct = 0.25 if symbol in ['BTCUSDT', 'ETHUSDT'] else 0.40
 
-    # COMPACT DATA PAYLOAD (80% MINDER TOKENS PER CALL - BESPAART ENORM VEEL GELD)
     m1_prompt_block = (
         "- M1 Candles (Laatste 5): " + json.dumps(candles_1m[-5:]) + "\n"
         if candles_1m
         else "- M1 Candles: NIET ACTIEF (Scalp Mode is UIT)\n"
     )
 
-    prompt = (
-        "SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT (" + str(symbol) + ")\n"
-        "1. ROL: Kwantitatieve Analyst Co-Pilot. Adviseer op basis van +EV, EV_adj, R:R en strikt risicobeheer.\n\n"
-        "CONTEXT BTCUSDT: Price = $" + str(btc_context['close']) + ", Trend = " + str(btc_context['trend']) + "\n"
-        "HARD KEY LEVELS VOOR " + str(symbol) + ": " + json.dumps(calculated_levels) + "\n"
-        "HARD TP1 TARGETS: LONG = $" + str(nearest_long_tp) + " | SHORT = $" + str(nearest_short_tp) + "\n\n"
-        "RECENTE MARKT DATA (" + str(symbol) + "):\n"
-        "- 15m Candles (Laatste 5): " + json.dumps(candles_15m[-5:]) + "\n"
-        "- M5 Candles (Laatste 5): " + json.dumps(candles_5m[-5:]) + "\n"
-        "- M3 Candles (Laatste 5): " + json.dumps(candles_3m[-5:]) + "\n"
-        + m1_prompt_block +
-        "\nEXECUTION REGELS:\n"
-        "1. SCALP RECLAIM: M3 Close + M1/M3 Reversal is VOLDOENDE voor GO (15m close OPTIONEEL).\n"
-        "2. DAY SWEEP / SWING: 15m Full Body Close VERPLICHT.\n"
-        "3. MINIMUM SL AFSTAND: Minimaal " + str(min_sl_pct) + "% op deze asset.\n"
-        "4. GO EISEN: Score >= 65%, EV_adj > +0.30R, R:R naar TP1 >= 1.2R.\n\n"
-        "OUTPUT FORMAT BIJ NO-GO:\n"
-        "**GO / NO-GO VERDICT:** **[NO-GO]** *(Rating: B | Score: X% | EV_adj: -X.XX R)*\n"
-        "Korte Analyse: (1 zin waarom NO-GO).\n\n"
-        "OUTPUT FORMAT BIJ PRE-TRADE ALERT:\n"
-        "**PRE-TRADE ALERT (KLAARZITTEN)** - " + str(symbol) + "\n"
-        "- **Afstand tot S/R Level:** ~X.XX% (Actuele koers: $" + str(curr_price) + ")\n"
-        "- **Verwachte S/R Zone:** $XX.XX (1D/4H/1H Level)\n"
-        "- **Actie:** Open M3/M5 chart en wacht op reversal.\n\n"
-        "OUTPUT FORMAT BIJ WATCHLIST OF GO:\n"
-        "**GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*\n"
-        "**ALPHA TRADE ANALYSIS (" + str(symbol) + "):**\n"
-        "- **BTC Context:** BTC Price = $" + str(btc_context['close']) + "\n\n"
-        "**EXECUTION SUMMARY (" + str(symbol) + " - [Long / Short]):**\n"
-        "- **Entry Price:** **$XX.XX**\n"
-        "- **Stop Loss (SL):** **$XX.XX**\n"
-        "- **TP1 Level:** **$XX.XX**\n"
-        "- **Max Adjusted EV (EV_adj):** **+X.XX R**\n"
+    alpha_instruction = (
+        "HOOGSTE PRIORITEIT (ALPHA TRADE): Deze munt vertoont de hoogste EVadj/relative strength van de scan."
+        if is_alpha else "Standaard kwantitatieve valutacheck."
     )
 
-    # STRIKT FLASH ONLY (VOORKOMT DUISTERE PRO-KOSTEN)
+    alpha_status_str = '🔥 POTENTIËLE ALPHA TRADE' if is_alpha else 'Normale Watchlist'
+    go_header_str = f'🟢 **ALPHA TRADE GO - {symbol}** 🟢' if is_alpha else f'🟢 **TRADE GO - {symbol}** 🟢'
+
+    prompt = f"""
+SYSTEM INSTRUCTIONS: QUANTITATIVE CRYPTO TRADING CO-PILOT ({symbol})
+
+1. ROL: Kwantitatieve Analyst Co-Pilot. Adviseer op basis van +EV, EVadj = T x EV, R:R en strikt risicobeheer.
+2. DREMPELS: EVadj verplicht > +0.30R, Setup Score >= 65%, R:R naar TP1 >= 1.20R. Min SL afstand: {min_sl_pct}%.
+3. PRIORITEIT: {alpha_instruction}
+
+CONTEXT {symbol}:
+- Huidige Prijs: ${curr_price}
+- Context BTCUSDT: Price = ${btc_context['close']}, Trend = {btc_context['trend']}
+- Key Levels: {json.dumps(calculated_levels)}
+- Hard TP Targets: LONG = ${nearest_long_tp} | SHORT = ${nearest_short_tp}
+
+RECENTE MARKT DATA ({symbol}):
+- 15m Candles (Laatste 5): {json.dumps(candles_15m[-5:])}
+- M5 Candles (Laatste 5): {json.dumps(candles_5m[-5:])}
+- M3 Candles (Laatste 5): {json.dumps(candles_3m[-5:])}
+{m1_prompt_block}
+
+VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT):
+
+1. ALS STATUS = NO-GO:
+GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
+Korte Analyse: [1-2 zinnen met de exacte reden].
+
+2. ALS STATUS = PRE-TRADE ALERT (Prijs <= 0.5% van Level, wachten op reversal):
+⚠️ PRE-TRADE ALERT - {symbol}
+• Actuele Koers: ${curr_price}
+• Naderende S/R Prijs: $XX.XX
+• Type S/R: [bijv. 1D PDH / 4H Swing High / 1H Support]
+
+3. ALS STATUS = WATCHLIST (15m Full Body Close op S/R, wachten op M3/M5 Reversal):
+👁️ WATCHLIST - {symbol}
+• Actuele Koers: ${curr_price}
+• S/R Prijs: $XX.XX ([Type S/R])
+• Alpha Trade Status: [{alpha_status_str}]
+
+Trade Setup (Optimum Scenario D - Retest Reversal / Max EVadj):
+• Entry Price: $XX.XX
+• Stop Loss (SL): $XX.XX
+• TP1 Level: $XX.XX
+• TP2 Level: $XX.XX
+• Max Adjusted EV (EVadj): +X.XX R
+• Winkans (P): XX%
+• Setup Score: XX%
+• Fill Chance (T): XX%
+• Expected Value (EV): +X.XX R
+
+4. ALS STATUS = GO (M3/M5 Reversal definitief afgerond + EVadj > +0.30R):
+{go_header_str}
+
+• **Verdict:** **[GO]** (Rating: [A+ | A] | Score: XX% | MAX EVadj: +X.XX R)
+• **Actuele Koers:** ${curr_price}
+• **S/R Prijs:** $XX.XX ([Type S/R])
+
+**EXECUTION SETUP (SCENARIO D - MAX EVadj):**
+• **Entry Price:** **$XX.XX**
+• **Stop Loss (SL):** **$XX.XX**
+• **TP1 Level:** **$XX.XX**
+• **TP2 Level:** **$XX.XX**
+• **Adjusted EV (EVadj):** **+X.XX R**
+• **Winkans (P):** **XX%**
+• **Setup Score:** **XX%**
+• **Fill Chance (T):** **XX%**
+• **Expected Value (EV):** **+X.XX R**
+
+Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
+"""
+
     models_to_try = [
         'gemini-2.5-flash',
         'gemini-1.5-flash',
@@ -450,7 +501,7 @@ def evaluate_market_with_gemini(
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (HIGH FREQUENCY & FASE-SPECIFIEKE COOLDOWN)
+# 6. MAIN SCANNER LOOP (INCLUSIEF EVadj ALPHA Trade SORTING ENGINE)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -477,6 +528,9 @@ def run_scanner():
         ),
     }
 
+    scanned_results = []
+
+    # PASS 1: Verzamel data & voer eerste evaluatie uit
     for symbol in SYMBOLS:
         try:
             candles_1d = fetch_binance_klines(symbol, '1d', limit=15)
@@ -492,14 +546,7 @@ def run_scanner():
                 else []
             )
 
-            if not (
-                candles_1d
-                and candles_4h
-                and candles_1h
-                and candles_15m
-                and candles_5m
-                and candles_3m
-            ):
+            if not (candles_1d and candles_4h and candles_1h and candles_15m and candles_5m and candles_3m):
                 continue
 
             calculated_levels = find_key_levels(
@@ -514,113 +561,104 @@ def run_scanner():
             curr_high = candles_15m[-1]['high']
             curr_low = candles_15m[-1]['low']
 
-            # 🎯 1. PRE-TRADE HTF CHECK (Binnen <= 0.5% van HTF Level)
             is_near_htf, matched_level = is_price_near_any_htf_level(
                 curr_close, curr_high, curr_low, calculated_levels
             )
 
             if not is_near_htf:
-                print(
-                    f'[{now_str}] [{symbol}] Geen HTF S/R nabij (> 0.5%). Scan'
-                    ' afgerond.',
-                    flush=True,
-                )
-                time.sleep(0.2)
                 continue
 
-            # 🛡️ DYNAMISCHE MICRO-FILTER
             is_pure_scalp = matched_level.get('importance') == 'LOW Scalp'
             direction = 'LONG' if curr_close >= matched_level['price'] else 'SHORT'
             nearest_tp = get_nearest_target(curr_close, calculated_levels, direction)
             reward_pct = abs(nearest_tp - curr_close) / curr_close * 100
 
             if is_pure_scalp and reward_pct < 0.20:
-                print(
-                    f'[{now_str}] [{symbol}] SKIPPED -> Pure micro-scalp TP1 te'
-                    f' dichtbij ({reward_pct:.2f}% < 0.20%).',
-                    flush=True,
-                )
-                time.sleep(0.2)
                 continue
 
             last_closed_candle_time = candles_15m[-2]['timestamp']
 
-            # Gemini AI Oproepen voor Pre-Trade Alert / Watchlist / GO Evaluatie
+            # Eerste evaluatie
             analysis = evaluate_market_with_gemini(
-                symbol,
-                candles_1d,
-                candles_4h,
-                candles_1h,
-                candles_15m,
-                candles_5m,
-                candles_3m,
-                candles_1m,
-                btc_context,
-                calculated_levels,
+                symbol, candles_1d, candles_4h, candles_1h, candles_15m,
+                candles_5m, candles_3m, candles_1m, btc_context, calculated_levels, is_alpha=False
             )
 
             if analysis:
-                first_line = analysis.split('\n')[0] if analysis else 'EMPTY'
-                print(
-                    f'[{now_str}] 🤖 [VERTEX RESPONSE {symbol}]: {first_line}',
-                    flush=True,
-                )
+                ev_adj = extract_ev_adj(analysis)
+                scanned_results.append({
+                    'symbol': symbol,
+                    'analysis': analysis,
+                    'ev_adj': ev_adj,
+                    'timestamp': last_closed_candle_time,
+                    'raw_data': (candles_1d, candles_4h, candles_1h, candles_15m, candles_5m, candles_3m, candles_1m, calculated_levels)
+                })
 
-                # 🔑 FASE-SPECIFIEKE SLEUTEL LOGICA (Borging van Pre-Trade -> Watchlist -> GO Flow)
-                phase_suffix = "_NO_GO"
-                if 'PRE-TRADE' in analysis or 'PRE-TRADE ALERT' in analysis:
-                    phase_suffix = "_PRE"
-                elif 'WATCHLIST' in analysis:
-                    phase_suffix = "_WATCHLIST"
-                elif '🚨 **GO**' in analysis or 'GO / NO-GO VERDICT: **GO**' in analysis:
-                    phase_suffix = "_GO"
-
-                alert_key = f"{symbol}_{last_closed_candle_time}{phase_suffix}"
-
-                if alert_key in last_alerted_candles:
-                    print(
-                        f'[{symbol}] Fase {phase_suffix} reeds gemeld voor deze 15m candle. Overgeslagen.',
-                        flush=True,
-                    )
-                    continue
-
-                is_valid_alert = any(
-                    keyword in analysis
-                    for keyword in [
-                        'PRE-TRADE',
-                        'WATCHLIST',
-                        '🚨 **GO**',
-                        'PRE-TRADE ALERT',
-                    ]
-                )
-
-                if is_valid_alert:
-                    send_telegram_message(analysis)
-                    last_alerted_candles[alert_key] = time.time()
-                    print(
-                        f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} ({phase_suffix}) NAAR TELEGRAM!',
-                        flush=True,
-                    )
-                else:
-                    last_alerted_candles[alert_key] = time.time()
-                    print(
-                        f'[{now_str}] [{symbol}] AI Verdict is NO-GO of afwijkend'
-                        ' format. Geen Telegram-bericht.',
-                        flush=True,
-                    )
-
-            time.sleep(0.5)
+            time.sleep(0.2)
         except Exception as e:
             print(f'Error bij verwerken {symbol}: {e}', flush=True)
+
+    if not scanned_results:
+        print(f'[{now_str}] Geen actieve S/R setups gevonden in deze scan.', flush=True)
+        return
+
+    # PASS 2: Bepaal de Alpha Trade (Hoogste EVadj)
+    scanned_results.sort(key=lambda x: x['ev_adj'], reverse=True)
+    best_candidate = scanned_results[0]
+
+    # Als de hoogste EVadj > 0.30R is, re-evalueren we die specifieke winnaar als ALPHA TRADE
+    if best_candidate['ev_adj'] > 0.30:
+        alpha_symbol = best_candidate['symbol']
+        raw = best_candidate['raw_data']
+        alpha_analysis = evaluate_market_with_gemini(
+            alpha_symbol, raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], btc_context, raw[7], is_alpha=True
+        )
+        if alpha_analysis:
+            best_candidate['analysis'] = alpha_analysis
+
+    # PASS 3: Verstuur de alerts in volgorde
+    for item in scanned_results:
+        symbol = item['symbol']
+        analysis = item['analysis']
+        last_closed_candle_time = item['timestamp']
+
+        first_line = analysis.split('\n')[0] if analysis else 'EMPTY'
+        print(f'[{now_str}] 🤖 [VERTEX RESPONSE {symbol} | EVadj: {item["ev_adj"]}]: {first_line}', flush=True)
+
+        is_no_go = '[NO-GO]' in analysis or 'NO-GO' in first_line
+        is_go = (re.search(r'\bGO\b', analysis) or '[GO]' in analysis) and not is_no_go
+        is_watchlist = 'WATCHLIST' in analysis and not is_no_go
+        is_pretrade = 'PRE-TRADE' in analysis and not is_no_go
+
+        phase_suffix = "_NO_GO"
+        if is_go:
+            phase_suffix = "_GO"
+        elif is_watchlist:
+            phase_suffix = "_WATCHLIST"
+        elif is_pretrade:
+            phase_suffix = "_PRE"
+
+        alert_key = f"{symbol}_{last_closed_candle_time}{phase_suffix}"
+
+        if phase_suffix != "_NO_GO" and alert_key in last_alerted_candles:
+            print(f'[{symbol}] Fase {phase_suffix} reeds gemeld. Overgeslagen.', flush=True)
+            continue
+
+        if phase_suffix != "_NO_GO":
+            send_telegram_message(analysis)
+            last_alerted_candles[alert_key] = time.time()
+            print(f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} ({phase_suffix}) NAAR TELEGRAM!', flush=True)
+        else:
+            last_alerted_candles[alert_key] = time.time()
 
 
 if __name__ == '__main__':
     startup_msg = (
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
-        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van HTF Key Level\n'
-        '2. 👁️ **Watchlist:** 15m Full Body Close op Key Level\n'
-        '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >= 65%\n\n'
+        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van HTF Key Level (Snoep-formaat)\n'
+        '2. 👁️ **Watchlist:** Full setup (Scenario D) + Multi-Asset Alpha Trade Sorting Engine\n'
+        '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal\n\n'
         '🛡️ **Cost Guardrail:** Compact Payload + Flash-Only actief (Gegarandeerd < €5/maand).'
     )
     send_telegram_message(startup_msg)
