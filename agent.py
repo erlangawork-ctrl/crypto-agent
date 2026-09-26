@@ -113,25 +113,25 @@ def listen_telegram_commands():
                     if text == '/scalp_off':
                         scalp_alerts_enabled = False
                         send_telegram_message(
-                            '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nM1 fetches en M3'
-                            ' micro-pivots gepauzeerd om tokens te besparen.'
+                            '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nUitsluitend 4H+ en 1D HTF'
+                            ' Key Levels worden gemonitord.'
                         )
                         print('Telegram Command: Scalp Alerts DISABLED', flush=True)
 
                     elif text == '/scalp_on':
                         scalp_alerts_enabled = True
                         send_telegram_message(
-                            '🟢 **SCALP ALERTS GEACTIVERD**\n\nMicro M1/M3 analyses weer'
-                            ' actief via Vertex AI.'
+                            '🟢 **SCALP ALERTS GEACTIVERD**\n\n1H Intraday en M3 Micro'
+                            ' niveaus actief.'
                         )
                         print('Telegram Command: Scalp Alerts ENABLED', flush=True)
 
                     elif text == '/status':
                         status_str = (
-                            '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD'
+                            '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD (4H+ Mode)'
                         )
                         send_telegram_message(
-                            f'🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode: {status_str}\n• High-Freq Engine: ACTIVE (60s loop)'
+                            f'🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode: {status_str}\n• Engine: ACTIVE (60s loop)'
                         )
 
         except Exception as e:
@@ -320,12 +320,12 @@ def get_nearest_target(current_price, calculated_levels, direction='LONG'):
 def is_price_near_any_htf_level(
     current_price, high_price, low_price, calculated_levels
 ):
-    """Checkt of de prijs binnen 0.5% van een S/R niveau staat. Negeert M3 Micro als Scalp Mode UIT staat."""
+    """Checkt of de prijs binnen 0.5% van een S/R niveau staat."""
     for lvl in calculated_levels:
         importance = lvl.get('importance', '')
 
-        # 🛡️ HARD SCALP FILTER: Als Scalp Mode UIT staat, negeer M3 Micro (LOW Scalp) niveaus!
-        if not scalp_alerts_enabled and 'LOW Scalp' in importance:
+        # 🛡️ HARD FILTER (SCALP OFF): Negeer M3 Micro (LOW Scalp) én 1H Intraday (MEDIUM Intraday) niveaus!
+        if not scalp_alerts_enabled and ('LOW Scalp' in importance or 'MEDIUM Intraday' in importance):
             continue
 
         target_price = lvl['price']
@@ -379,7 +379,7 @@ def extract_ev_adj(analysis_text):
 
 
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (STRIKT AFGEBAKENDE PROMPT)
+# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -683,7 +683,7 @@ if __name__ == '__main__':
     startup_msg = (
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
-        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van HTF Key Level (Snoep-formaat, max 1x/uur)\n'
+        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van 4H+ HTF Key Level (Snoep-formaat, max 1x/uur)\n'
         '2. 👁️ **Watchlist:** Full setup (Scenario D) + Multi-Asset Alpha Trade Sorting Engine\n'
         '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal\n\n'
         '🛡️ **Cost Guardrail:** Compact Payload + Flash-Only actief (Gegarandeerd < €5/maand).'
