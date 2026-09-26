@@ -86,7 +86,7 @@ ny_open_alert_sent_today = False
 
 
 # ==========================================
-# 3. TELEGRAM COMMAND HANDLER (LIVE INTERACTIE)
+# 3. TELEGRAM COMMAND HANDLER
 # ==========================================
 def listen_telegram_commands():
     """Luistert op de achtergrond naar Telegram commando's (/scalp_off, /scalp_on, /status)"""
@@ -112,30 +112,25 @@ def listen_telegram_commands():
                     if text == '/scalp_off':
                         scalp_alerts_enabled = False
                         send_telegram_message(
-                            '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nM1 data-fetches, M3'
-                            ' scalp-pivots en AI-calls voor Scalp Reclaims zijn gepauzeerd.'
+                            '🔴 **SCALP ALERTS UITGESCHAKELD**\n\nM1 fetches en M3'
+                            ' micro-pivots gepauzeerd om tokens te besparen.'
                         )
-                        print(
-                            'Telegram Command Executed: Scalp Alerts DISABLED', flush=True
-                        )
+                        print('Telegram Command: Scalp Alerts DISABLED', flush=True)
 
                     elif text == '/scalp_on':
                         scalp_alerts_enabled = True
                         send_telegram_message(
-                            '🟢 **SCALP ALERTS GEACTIVERD**\n\nHigh-frequency M1 micro-data'
-                            ' en M3 scalp analyses via Vertex AI zijn weer actief.'
+                            '🟢 **SCALP ALERTS GEACTIVERD**\n\nMicro M1/M3 analyses weer'
+                            ' actief via Vertex AI.'
                         )
-                        print(
-                            'Telegram Command Executed: Scalp Alerts ENABLED', flush=True
-                        )
+                        print('Telegram Command: Scalp Alerts ENABLED', flush=True)
 
                     elif text == '/status':
                         status_str = (
                             '🟢 ACTIEF' if scalp_alerts_enabled else '🔴 UITGESCHAKELD'
                         )
                         send_telegram_message(
-                            '🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode:'
-                            f' {status_str}\n• High-Freq Engine: ACTIVE (60s loop)'
+                            f'🤖 **MYCRYPTOAGENT SYSTEM STATUS**\n\n• Scalp Mode: {status_str}\n• High-Freq Engine: ACTIVE (60s loop)'
                         )
 
         except Exception as e:
@@ -147,7 +142,7 @@ threading.Thread(target=listen_telegram_commands, daemon=True).start()
 
 
 # ==========================================
-# 4. HELPER FUNCTIES & HARD S/R ENGINE
+# 4. HELPER FUNCTIES & SMART CONFLUENCE S/R ENGINE
 # ==========================================
 def send_telegram_message(text):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -185,13 +180,13 @@ def find_key_levels(
     candles_1d, candles_4h, candles_1h, candles_3m=None, include_scalp=True
 ):
     levels = []
-    seen_prices = set()
 
     def add_level(name, price, importance):
-        for p in seen_prices:
-            if abs(p - price) / price < 0.001:
-                return
-        seen_prices.add(price)
+        for lvl in levels:
+            if abs(lvl['price'] - price) / price < 0.002:
+                if 'CRITICAL' in lvl['importance'] or 'HIGH' in lvl['importance']:
+                    lvl['name'] += f' + Confluence ({name})'
+                    return
         levels.append({'name': name, 'price': price, 'importance': importance})
 
     if len(candles_1d) >= 2:
@@ -277,7 +272,6 @@ def find_key_levels(
                 'MEDIUM Intraday',
             )
 
-    # ENKEL M3 MICRO SCALP PIVOTS BEREKENEN ALS SCALP ALERTS ACTIEF ZIJN (/scalp_on)
     if include_scalp and candles_3m and len(candles_3m) >= 5:
         for i in range(2, len(candles_3m) - 2):
             if (
@@ -317,26 +311,24 @@ def get_nearest_target(current_price, calculated_levels, direction='LONG'):
         return max(targets) if targets else current_price * 0.985
 
 
-def is_price_near_any_level(
-    current_price,
-    high_price,
-    low_price,
-    calculated_levels,
-    max_distance_pct=2.0,
+def is_price_near_any_htf_level(
+    current_price, high_price, low_price, calculated_levels
 ):
+    """Checkt of de prijs (Close, High of Low Wick) binnen 2.0% van een HTF S/R niveau staat."""
     for lvl in calculated_levels:
-        target_price = lvl['price']
-        if target_price <= 0:
-            continue
-        dist_close = abs(current_price - target_price) / target_price * 100
-        dist_high = abs(high_price - target_price) / target_price * 100
-        dist_low = abs(low_price - target_price) / target_price * 100
-        if (
-            dist_close <= max_distance_pct
-            or dist_high <= max_distance_pct
-            or dist_low <= max_distance_pct
-        ):
-            return True, lvl
+        if lvl.get('importance') in [
+            'CRITICAL HTF',
+            'HIGH HTF',
+            'MEDIUM Intraday',
+        ]:
+            target_price = lvl['price']
+            dist_close = abs(current_price - target_price) / target_price * 100
+            dist_high = abs(high_price - target_price) / target_price * 100
+            dist_low = abs(low_price - target_price) / target_price * 100
+
+            # Neem wicks expliciet mee voor Day Sweeps!
+            if dist_close <= 2.0 or dist_high <= 2.0 or dist_low <= 2.0:
+                return True, lvl
     return False, None
 
 
@@ -381,12 +373,11 @@ def evaluate_market_with_gemini(
     candles_15m,
     candles_5m,
     candles_3m,
-    candles_1m,  # M1 Micro Data
+    candles_1m,
     btc_context,
     calculated_levels,
 ):
     if not ai_client:
-        print('Vertex AI client is niet geïnitialiseerd.', flush=True)
         return None
 
     current_live_candle = candles_15m[-1]
@@ -394,7 +385,6 @@ def evaluate_market_with_gemini(
 
     nearest_long_tp = get_nearest_target(curr_price, calculated_levels, 'LONG')
     nearest_short_tp = get_nearest_target(curr_price, calculated_levels, 'SHORT')
-
     min_sl_pct = 0.25 if symbol in ['BTCUSDT', 'ETHUSDT'] else 0.40
 
     m1_prompt_block = (
@@ -449,7 +439,7 @@ def evaluate_market_with_gemini(
         "Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)\n\n"
         "3-TRAPS VERDICT REGELS:\n"
         "1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.\n"
-        "2. WATCHLIST: 15m Full Body Close GEVALIDEERD, maar M3/M5 reversal nog in aanbouw.\n"
+        "2. WATCHLIST: 15m Full Body Close GEVALIDEERD (wick <= 30%), maar M3/M5 reversal nog in aanbouw.\n"
         "3. GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.\n"
         "4. NO-GO: Score < 65%, onvoldoende R:R (<1.2R) naar TP1, of SL < " + str(min_sl_pct) + "%.\n\n"
         "OUTPUT FORMAT BIJ 'NO-GO':\n"
@@ -499,24 +489,16 @@ def evaluate_market_with_gemini(
     for model_name in models_to_try:
         try:
             response = ai_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
+                model=model_name, contents=prompt
             )
             return response.text.strip()
-        except Exception as e:
-            err_str = str(e)
-            if 'NOT_FOUND' in err_str or '404' in err_str:
-                continue
-            elif '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
-                time.sleep(2)
-            else:
-                print(f'Vertex AI Error ({model_name}) voor {symbol}: {e}', flush=True)
-                return None
+        except Exception:
+            continue
     return None
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (HIGH FREQUENCY)
+# 6. MAIN SCANNER LOOP (HIGH FREQUENCY & GUARANTEED PRE-TRADE ALERTS)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -559,17 +541,17 @@ def run_scanner():
                 else []
             )
 
-            if (
-                not candles_1d
-                or not candles_4h
-                or not candles_1h
-                or not candles_15m
-                or not candles_5m
-                or not candles_3m
+            if not (
+                candles_1d
+                and candles_4h
+                and candles_1h
+                and candles_15m
+                and candles_5m
+                and candles_3m
             ):
                 continue
 
-            # DYNAMISCH SCALP LEVELS BEREKENEN ENKEL ALS /scalp_on IS
+            # Slimme Level Detectie met Confluence samenvoeging
             calculated_levels = find_key_levels(
                 candles_1d,
                 candles_4h,
@@ -582,59 +564,45 @@ def run_scanner():
             curr_high = candles_15m[-1]['high']
             curr_low = candles_15m[-1]['low']
 
-            is_near, matched_level = is_price_near_any_level(
-                curr_close,
-                curr_high,
-                curr_low,
-                calculated_levels,
-                max_distance_pct=2.0,
+            # 🎯 1. PRE-TRADE HTF CHECK (Binnen 2.0% van 1D/4H/1H Level?)
+            is_near_htf, matched_level = is_price_near_any_htf_level(
+                curr_close, curr_high, curr_low, calculated_levels
             )
 
-            if not is_near:
+            if not is_near_htf:
                 print(
-                    f'[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Prijs > 2.0% van'
-                    ' S/R levels.',
+                    f'[{now_str}] [{symbol}] Geen HTF S/R nabij (> 2.0%). Scan'
+                    ' afgerond.',
                     flush=True,
                 )
                 time.sleep(0.2)
                 continue
 
-            # 🛡️ PYTHON SCALP FILTER (BESPAART API TOKENS & SKIPS M3 LEVELS ALS /scalp_off IS)
-            is_scalp_level = matched_level and (
-                'M3 Micro' in matched_level['name']
-                or matched_level.get('importance') == 'LOW Scalp'
-            )
-            if not scalp_alerts_enabled and is_scalp_level:
-                print(
-                    f'[{now_str}] [{symbol}] SKIPPED -> Scalp level gedetecteerd, maar'
-                    ' Scalp Alerts staan UIT (/scalp_off). API Call bespaard!',
-                    flush=True,
-                )
-                time.sleep(0.2)
-                continue
-
-            # Python Hard Pre-Check voor TP1 ruimte
+            # 🛡️ DYNAMISCHE MICRO-FILTER (Voorkomt dat Pre-Trade Alerts op HTF niveaus worden geblokkeerd)
+            is_pure_scalp = matched_level.get('importance') == 'LOW Scalp'
             direction = 'LONG' if curr_close >= matched_level['price'] else 'SHORT'
             nearest_tp = get_nearest_target(curr_close, calculated_levels, direction)
             reward_pct = abs(nearest_tp - curr_close) / curr_close * 100
 
-            if reward_pct < 0.40:
+            # Alleen skippen als het een puur M3 scalp-niveau is zónder HTF-waarde én met te weinig ruimte (<0.20%)
+            if is_pure_scalp and reward_pct < 0.20:
                 print(
-                    f'[{now_str}] [{symbol}] SKIPPED -> TP1 te dichtbij'
-                    f' ({reward_pct:.2f}% < 0.40%). R:R < 1.20R gegarandeerd.',
+                    f'[{now_str}] [{symbol}] SKIPPED -> Pure micro-scalp TP1 te'
+                    f' dichtbij ({reward_pct:.2f}% < 0.20%).',
                     flush=True,
                 )
                 time.sleep(0.2)
                 continue
 
             print(
-                f'[{now_str}] 🎯 [{symbol}] NABIJ S/R LEVEL ({matched_level["name"]})'
+                f'[{now_str}] 🎯 [{symbol}] NABIJ HTF LEVEL ({matched_level["name"]})'
                 ' -> Vertex AI Inschakelen...',
                 flush=True,
             )
 
             last_closed_candle_time = candles_15m[-2]['timestamp']
 
+            # Gemini AI Oproepen voor Pre-Trade Alert / Watchlist / GO Evaluatie
             analysis = evaluate_market_with_gemini(
                 symbol,
                 candles_1d,
@@ -643,43 +611,33 @@ def run_scanner():
                 candles_15m,
                 candles_5m,
                 candles_3m,
-                candles_1m,  # Enkel gevuld als /scalp_on
+                candles_1m,
                 btc_context,
                 calculated_levels,
             )
 
-            is_go_alert = analysis and (
-                '🚨 **GO**' in analysis or 'GO / NO-GO VERDICT: **GO**' in analysis
-            )
-            alert_key = (
-                f'{symbol}_{last_closed_candle_time}'
-                if not is_go_alert
-                else f'{symbol}_{last_closed_candle_time}_GO'
-            )
+            if analysis:
+                is_go_alert = (
+                    '🚨 **GO**' in analysis or 'GO / NO-GO VERDICT: **GO**' in analysis
+                )
+                alert_key = (
+                    f'{symbol}_{last_closed_candle_time}'
+                    if not is_go_alert
+                    else f'{symbol}_{last_closed_candle_time}_GO'
+                )
 
-            if analysis and (
-                'PRE-TRADE ALERT' in analysis
-                or '🚨 **GO**' in analysis
-                or 'WATCHLIST' in analysis
-                or 'GO / NO-GO VERDICT' in analysis
-            ):
+                # Cooldown check om dubbele meldingen binnen dezelfde 15m te voorkomen
                 if alert_key in last_alerted_candles:
                     print(
-                        f'[{symbol}] Reeds gemeld binnen de afgelopen 15 minuten.',
+                        f'[{symbol}] Reeds gemeld binnen deze 15 minuten.',
                         flush=True,
                     )
                     continue
 
-                print(
-                    f'[{now_str}] 🚨 ALERT GEGENEREERD EN VERSTUURD VOOR {symbol}!',
-                    flush=True,
-                )
                 send_telegram_message(analysis)
                 last_alerted_candles[alert_key] = time.time()
-            else:
                 print(
-                    f'[{now_str}] [{symbol}] Scan voltooid -> NO-GO / Geen valide S/R'
-                    ' setup.',
+                    f'[{now_str}] 🚨 ALERT VERSTUURD VOOR {symbol} NAAR TELEGRAM!',
                     flush=True,
                 )
 
@@ -692,14 +650,13 @@ if __name__ == '__main__':
     startup_msg = (
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
-        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van 1D/4H/1H Key Level\n'
-        '2. 👁️ **Watchlist:** 15m Full Body Close (Wick <= 30%) op Key Level\n'
+        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van HTF Key Level\n'
+        '2. 👁️ **Watchlist:** 15m Full Body Close op Key Level\n'
         '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >='
         ' 65%\n\n'
         '• **Interactive Scalp Toggle:** Gebruik `/scalp_off` en `/scalp_on` in'
-        ' Telegram om M1 micro-data fetches en Scalp AI-calls live te pauzeren.\n'
-        '• **System Status Check:** Stuur `/status` in Telegram voor live'
-        ' schakelaar-status.'
+        ' Telegram.\n'
+        '• **System Status Check:** Stuur `/status` in Telegram.'
     )
     send_telegram_message(startup_msg)
 
@@ -708,5 +665,4 @@ if __name__ == '__main__':
             run_scanner()
         except Exception as e:
             print(f'Loop error: {e}', flush=True)
-
         time.sleep(60)
