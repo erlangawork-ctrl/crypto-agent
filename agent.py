@@ -17,7 +17,7 @@ import requests
 app = Flask(__name__)
 
 # GLOBALE SCHAKELAAR VOOR SCALP ALERTS (Standaard: True)
-scalp_alerts_enabled = True
+scalp_alerts_enabled = False
 
 
 @app.route('/')
