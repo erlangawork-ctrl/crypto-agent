@@ -318,8 +318,14 @@ def get_nearest_target(current_price, calculated_levels, direction='LONG'):
 def is_price_near_any_htf_level(
     current_price, high_price, low_price, calculated_levels
 ):
-    """Checkt of de prijs (Close, High of Low Wick) binnen 0.5% van een S/R niveau staat."""
+    """Checkt of de prijs binnen 0.5% van een S/R niveau staat. Negeert M3 Micro als Scalp Mode UIT staat."""
     for lvl in calculated_levels:
+        importance = lvl.get('importance', '')
+
+        # 🛡️ HARD SCALP FILTER: Als Scalp Mode UIT staat, negeer M3 Micro (LOW Scalp) niveaus!
+        if not scalp_alerts_enabled and 'LOW Scalp' in importance:
+            continue
+
         target_price = lvl['price']
         dist_close = abs(current_price - target_price) / target_price * 100
         dist_high = abs(high_price - target_price) / target_price * 100
@@ -372,7 +378,7 @@ def extract_ev_adj(analysis_text):
 
 
 # ==========================================
-# 5. AI QUANT EVALUATIE ENGINE (VERTEX AI - VOLLEDIG GEUNIFICEERD)
+# 5. AI QUANT EVALUATIE ENGINE (STRIKT AFGEBAKENDE PROMPT)
 # ==========================================
 def evaluate_market_with_gemini(
     symbol,
@@ -437,7 +443,7 @@ RECENTE MARKT DATA ({symbol}):
 - M3 Candles (Laatste 5): {json.dumps(candles_3m[-5:])}
 {m1_prompt_block}
 
-VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT):
+VERPLICHTE OUTPUT STIJLEN PER STATUS (GEBRUIK EXACT DIT FORMAT EN VOEG GEEN EXTRA VELDEN/ANALYSES TOE):
 
 1. ALS STATUS = NO-GO:
 GO / NO-GO VERDICT: [NO-GO] (Rating: B | Score: X% | EV_adj: -X.XX R)
@@ -448,6 +454,8 @@ Korte Analyse: [1-2 zinnen met de exacte reden: bijv. R:R < 1.2R naar HTF resist
 • Actuele Koers: ${curr_price}
 • Naderende S/R Prijs: $XX.XX
 • Type S/R: [bijv. 1D PDH / 4H Swing High / 1H Support]
+
+(STRIKT VERBODEN: VOEG GEEN ANALYSE, GEEN TRADE SETUP, GEEN EVADJ EN GEEN EXTRA REGELS TOE BIJ PRE-TRADE ALERTS!)
 
 3. ALS STATUS = WATCHLIST (15m Full Body Close op S/R, wachten op M3/M5 Reversal):
 👁️ WATCHLIST - {symbol}
@@ -506,7 +514,7 @@ Korte Analyse: [Max 2 zinnen met exacte reden en BTC-correlatie].
 
 
 # ==========================================
-# 6. MAIN SCANNER LOOP (INCLUSIEF EVadj ALPHA TRADE SORTING ENGINE)
+# 6. MAIN SCANNER LOOP (INCLUSIEF ANTI-SPAM FILTER)
 # ==========================================
 def run_scanner():
     tz = pytz.timezone('Europe/Amsterdam')
@@ -621,7 +629,7 @@ def run_scanner():
         if alpha_analysis:
             best_candidate['analysis'] = alpha_analysis
 
-    # PASS 3: Verstuur de alerts in volgorde
+    # PASS 3: Verstuur de alerts in volgorde MET ANTI-SPAM FILTER
     for item in scanned_results:
         symbol = item['symbol']
         analysis = item['analysis']
@@ -643,6 +651,14 @@ def run_scanner():
         elif is_pretrade:
             phase_suffix = "_PRE"
 
+        # 🛡️ ANTI-SPAM COOLDOWN VOOR PRE-TRADE ALERTS (Max 1x per 60 minuten per coin)
+        if phase_suffix == "_PRE":
+            last_pre_key = f"{symbol}_PRE_TIME"
+            if last_pre_key in last_alerted_candles and (time.time() - last_alerted_candles[last_pre_key]) < 3600:
+                print(f'[{symbol}] PRE-TRADE alert reeds verstuurd in het afgelopen uur. Overgeslagen.', flush=True)
+                continue
+            last_alerted_candles[last_pre_key] = time.time()
+
         alert_key = f"{symbol}_{last_closed_candle_time}{phase_suffix}"
 
         if phase_suffix != "_NO_GO" and alert_key in last_alerted_candles:
@@ -661,7 +677,7 @@ if __name__ == '__main__':
     startup_msg = (
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
-        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van HTF Key Level (Snoep-formaat)\n'
+        '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 0.5% van HTF Key Level (Snoep-formaat, max 1x/uur)\n'
         '2. 👁️ **Watchlist:** Full setup (Scenario D) + Multi-Asset Alpha Trade Sorting Engine\n'
         '3. 🟢 **GO Execution:** Groene, dikgedrukte status met afgeronde M3/M5 reversal\n\n'
         '🛡️ **Cost Guardrail:** Compact Payload + Flash-Only actief (Gegarandeerd < €5/maand).'
