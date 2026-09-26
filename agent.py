@@ -326,7 +326,6 @@ def is_price_near_any_htf_level(
             dist_high = abs(high_price - target_price) / target_price * 100
             dist_low = abs(low_price - target_price) / target_price * 100
 
-            # Neem wicks expliciet mee voor Day Sweeps!
             if dist_close <= 2.0 or dist_high <= 2.0 or dist_low <= 2.0:
                 return True, lvl
     return False, None
@@ -418,14 +417,17 @@ def evaluate_market_with_gemini(
         "   - Stop Loss (SL): Strak onder/boven de M3/M5 wick (Minimaal " + str(min_sl_pct) + "%).\n"
         "   - TP1 Level (70% SCALE-OUT): Het EERSTVOLGENDE M15 of 1H Micro-level. Snel cashen!\n"
         "   - R:R Target: TP1 vanaf 1.2R tot 2.0R is voldoende voor een GO.\n"
+        "   - ENTRY TRIGGER: Voor Scalp Reclaims is een 15m close OPTIONEEL. Een M3 Close met een bevestigde M1/M3 Reversal Candle (volume >= 1.5x SMA 9) is VOLDOENDE voor een GO!\n"
         "2. ALS PLAYBOOK = [DAY SWEEP] (15m/1H Sweep van PDH/PDL/Swings):\n"
         "   - Stop Loss (SL): Onder/boven de 15m/1H sweep wick high/low + ademruimte.\n"
         "   - TP1 Level (50% SCALE-OUT): Het eerstvolgende 1H/4H Key Level.\n"
         "   - R:R Target: TP1 MOET minimaal >= 1.5R tot 3.0R bieden.\n"
+        "   - ENTRY TRIGGER: 15m Full Body Close (wick <= 30%) VERPLICHT.\n"
         "3. ALS PLAYBOOK = [SWING BREAKOUT] (4H/Daily Retest):\n"
         "   - Stop Loss (SL): Ruim ingesteld onder/boven de 4H/Daily swing structuur zone.\n"
         "   - TP1 Level (30% SCALE-OUT): Het eerstvolgende Major Daily/Weekly Resistance/Support level.\n"
-        "   - R:R Target: TP1 MOET minimaal >= 2.0R bieden.\n\n"
+        "   - R:R Target: TP1 MOET minimaal >= 2.0R bieden.\n"
+        "   - ENTRY TRIGGER: 15m/1H Full Body Close VERPLICHT.\n\n"
         "STRIKTE WISKUNDIGE GUARDRAILS (HARD ENFORCED):\n"
         "1. Risico 1R = |Entry - StopLoss|.\n"
         "2. Beloning naar TP1 = |TP1 - Entry|.\n"
@@ -438,20 +440,20 @@ def evaluate_market_with_gemini(
         "1. Trend (35%) | 2. Level Kwaliteit (30%) | 3. Displacement & Micro (20%) | 4. Session Timing (15%)\n"
         "Rating: A+ (>=85%), A (65-84%), B (<65% -> AUTOMATISCH NO-GO)\n\n"
         "3-TRAPS VERDICT REGELS:\n"
-        "1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen 15m close/reversal.\n"
-        "2. WATCHLIST: 15m Full Body Close GEVALIDEERD (wick <= 30%), maar M3/M5 reversal nog in aanbouw.\n"
-        "3. GO: 15m Full Body Close GEVALIDEERD EN M3/M5 Reversal BEVESTIGD EN Score >= 65% EN EV_adj > +0.30R EN R:R naar TP1 >= 1.2R.\n"
+        "1. PRE-TRADE ALERT: Prijs/wick binnen <= 2.0% van KEY LEVEL, maar nog geen reversal.\n"
+        "2. WATCHLIST: Key Level geraakt, 15m close (Day Sweep/Swing) of M3 Opbouw (Scalp) gevalideerd, maar M3/M5 reversal nog in aanbouw.\n"
+        "3. GO: (a) Voor Day Sweep/Swing: 15m Full Body Close + M3/M5 Reversal BEVESTIGD. (b) Voor Scalp Reclaim: M3 Close + M1/M3 Reversal BEVESTIGD. Beiden eisen Score >= 65%, EV_adj > +0.30R en R:R naar TP1 >= 1.2R.\n"
         "4. NO-GO: Score < 65%, onvoldoende R:R (<1.2R) naar TP1, of SL < " + str(min_sl_pct) + "%.\n\n"
         "OUTPUT FORMAT BIJ 'NO-GO':\n"
         "**GO / NO-GO VERDICT:** **[NO-GO]** *(Rating: B | Score: X% | EV_adj: -X.XX R)*\n"
-        "Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar TP1, de SL te krap is (<" + str(min_sl_pct) + "%), of de M5 reversal ontbreekt).\n\n"
+        "Korte Analyse: (Leg uit waarom de R:R onvoldoende is naar TP1, de SL te krap is (<" + str(min_sl_pct) + "%), of de M3/M5 reversal ontbreekt).\n\n"
         "OUTPUT FORMAT BIJ 'PRE-TRADE ALERT':\n"
         "**PRE-TRADE ALERT (KLAARZITTEN)** - " + str(symbol) + "\n"
         "- **Afstand tot S/R Level:** ~X.XX% (Actuele koers: $" + str(current_live_candle['close']) + " vs Key Level: $XX.XX)\n"
         "- **Verwachte S/R Zone:** $XX.XX -$XX.XX (1D / 4H / 1H Level)\n"
         "- **Verwachte Playbook:** [Swing Breakout | Day Sweep | Scalp Reclaim]\n"
         "- **Verwachte Richting:** [Long / Short]\n"
-        "- **Actie:** Open je chart op M3/M5. Wacht op 15m close en M3/M5 reversal.\n\n"
+        "- **Actie:** Open je chart op M3/M5. Wacht op M3/M5 reversal.\n\n"
         "OUTPUT FORMAT BIJ 'WATCHLIST' OF 'GO':\n"
         "**GO / NO-GO VERDICT:** **[GO | WATCHLIST]** *(Rating: [A+ | A] | Score: X% | MAX EV_adj: +X.XX R)*\n\n"
         "**ALPHA TRADE ANALYSIS (" + str(symbol) + "):**\n"
@@ -651,7 +653,8 @@ if __name__ == '__main__':
         '🤖 **MyCryptoAgent Master Service IS LIVE ON VERTEX AI!**\n\n'
         '**Geïntegreerd Quantitative System Instructions:**\n'
         '1. ⚠️ **Pre-Trade Alert:** Prijs binnen <= 2.0% van HTF Key Level\n'
-        '2. 👁️ **Watchlist:** 15m Full Body Close op Key Level\n'
+        '2. 👁️ **Watchlist:** 15m Full Body Close op Key Level (Day Sweep) / M3'
+        ' Opbouw (Scalp)\n'
         '3. 🚨 **GO Execution:** M3/M5 Reversal + EV_adj > +0.30R & Score >='
         ' 65%\n\n'
         '• **Interactive Scalp Toggle:** Gebruik `/scalp_off` en `/scalp_on` in'
